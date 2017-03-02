@@ -15,7 +15,15 @@ struct BlockOfCode::ExceptionHandler::Impl final {
 BlockOfCode::ExceptionHandler::ExceptionHandler() = default;
 BlockOfCode::ExceptionHandler::~ExceptionHandler() = default;
 
-void BlockOfCode::ExceptionHandler::Register(BlockOfCode*) {
+void BlockOfCode::ExceptionHandler::Register(BlockOfCode*, const UserCallbacks&) {
+    // Do nothing
+}
+
+bool BlockOfCode::ExceptionHandler::SupportsFastMem() const {
+    return false;
+}
+
+void BlockOfCode::ExceptionHandler::SetFastMemCallback(std::function<void(const u8*)>) {
     // Do nothing
 }
 

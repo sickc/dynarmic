@@ -13,6 +13,7 @@
 #include "backend_x64/block_of_code.h"
 #include "common/assert.h"
 #include "common/common_types.h"
+#include <boost/optional/optional.hpp>
 
 using UBYTE = u8;
 
@@ -65,7 +66,12 @@ struct UNWIND_INFO {
     UBYTE FrameRegister : 4;
     UBYTE FrameOffset : 4;
     // UNWIND_CODE UnwindCode[];
-    // With Flags == 0 there are no additional fields.
+    // OPTIONAL UNW_EXCEPTION_INFO ExceptionInfo;
+};
+
+struct UNW_EXCEPTION_INFO {
+    ULONG ExceptionHandler;
+    // OPTIONAL ARBITRARY HandlerData;
 };
 
 namespace Dynarmic {
@@ -157,29 +163,319 @@ static PrologueInformation GetPrologueInformation() {
     return ret;
 }
 
+struct EmulatedMemoryAccess {
+    bool is_write;
+    size_t bit_size;
+    size_t vaddr_x64_register;
+    size_t value_x64_register;
+    const u8* after_instruction;
+};
+
+enum class MovInstType {
+    FastMemBase,
+    PageTable,
+};
+
+static boost::optional<EmulatedMemoryAccess> ParseX64MovInstruction(const u8* code, MovInstType type) {
+    // We're only interested in a small number of mov/movzx instructions:
+    // * 0x66 is the only legacy prefix and only appears at most once.
+    // * REX prefix may or may not appear.
+    // * Only [sib] addressing is used.
+    // * Both the base and index registers are required.
+    // * Scale must be 1.
+    // If any of the above are violated, this function returns boost::none.
+    //
+    // An additonal unverified assumption is also made:
+    // * Displacement is assumed to be zero.
+
+    bool opsize_prefix = false;
+    if (*code == 0x66) {
+        opsize_prefix = true;
+        code++;
+    }
+
+    bool rex_w = false;
+    bool rex_r = false;
+    bool rex_x = false;
+    bool rex_b = false;
+    if ((*code & 0xF0) == 0x40) {
+        rex_w = (*code & 0b1000) != 0;
+        rex_r = (*code & 0b0100) != 0;
+        rex_x = (*code & 0b0010) != 0;
+        rex_b = (*code & 0b0001) != 0;
+        code++;
+    }
+
+    EmulatedMemoryAccess ret;
+
+    // Supported instructions:
+    // mov r/m8, r8
+    // mov r/m16, r16
+    // mov r/m32, r32
+    // mov r/m64, r64
+    // movzx r32, r/m8
+    // movzx r32, r/m16
+    // mov r32, r/m32
+    // mov r64, r/m64
+    switch (*code) {
+    case 0x88:
+        ret.is_write = true;
+        ret.bit_size = 8;
+        break;
+    case 0x89:
+        ret.is_write = true;
+        ret.bit_size = opsize_prefix ? 16 : (!rex_w ? 32 : 64);
+        break;
+    case 0x8B:
+        if (opsize_prefix) {
+            // mov r16, r/m16 not supported
+            return {};
+        }
+        ret.is_write = false;
+        ret.bit_size = !rex_w ? 32 : 64;
+        break;
+    case 0x0F:
+        code++;
+        switch (*code) {
+        case 0xB6:
+            ret.is_write = false;
+            ret.bit_size = 8;
+            break;
+        case 0xB7:
+            ret.is_write = false;
+            ret.bit_size = 16;
+            break;
+        default:
+            return {}; // Unsupported opcode
+        }
+        break;
+    default:
+        return {}; // Unsupported opcode
+    }
+    code++;
+
+    u8 modrm = *code;
+    u8 modrm_mod = (modrm & 0b11000000) >> 6;
+    u8 modrm_reg = (modrm & 0b00111000) >> 3;
+    u8 modrm_rm = (modrm & 0b00000111);
+    code++;
+    if (modrm_rm != 0b100 || modrm_mod == 0b11) {
+        // Only [sib] addressing supported
+        return {};
+    }
+    ret.value_x64_register = modrm_reg + (rex_r ? 8 : 0);
+
+    u8 sib = *code;
+    u8 sib_scale = (sib & 0b11000000) >> 6;
+    u8 sib_index = (sib & 0b00111000) >> 3;
+    u8 sib_base = (sib & 0b00000111);
+    code++;
+    if (sib_scale != 0b00) {
+        // Only scale == 1 is supported
+        return {};
+    }
+    if (modrm_mod == 0b00 && sib_base == 0b101) {
+        // Base register is required
+        return {};
+    }
+    if (!rex_x && sib_index == 0b100) {
+        // Index register is required
+        return {};
+    }
+    size_t index = sib_index + (rex_x ? 8 : 0);
+    size_t base = sib_base + (rex_b ? 8 : 0);
+    switch (type) {
+    case MovInstType::FastMemBase:
+        if (base == 14) {
+            ret.vaddr_x64_register = index;
+        } else if (index == 14) {
+            ret.vaddr_x64_register = base;
+        } else {
+            // We only support [r14 + vaddr_reg] or [vaddr_reg + r14]
+            return {};
+        }
+        break;
+    case MovInstType::PageTable:
+        if (ret.is_write) {
+            if (ret.value_x64_register != 2)
+                return {};
+            if (index != 0 && base != 0)
+                return {};
+            ret.vaddr_x64_register = 1;
+        } else {
+            if (ret.value_x64_register != 0)
+                return {};
+            if (index != 0 && base != 0)
+                return {};
+            ret.vaddr_x64_register = 1;
+        }
+        break;
+    default:
+        return {};
+    }
+
+    // HACK: We assume displacement == 0 if there is any.
+    switch (modrm_mod) {
+    case 0b01:
+        code += 1;
+        break;
+    case 0b10:
+        code += 4;
+        break;
+    }
+
+    ret.after_instruction = code;
+    return ret;
+}
+
+static u64& GetRegister(PCONTEXT ContextRecord, size_t reg_id) {
+    switch (reg_id) {
+    case 0:
+        return ContextRecord->Rax;
+    case 1:
+        return ContextRecord->Rcx;
+    case 2:
+        return ContextRecord->Rdx;
+    case 3:
+        return ContextRecord->Rbx;
+    case 4:
+        return ContextRecord->Rsp;
+    case 5:
+        return ContextRecord->Rbp;
+    case 6:
+        return ContextRecord->Rsi;
+    case 7:
+        return ContextRecord->Rdi;
+    case 8:
+        return ContextRecord->R8;
+    case 9:
+        return ContextRecord->R9;
+    case 10:
+        return ContextRecord->R10;
+    case 11:
+        return ContextRecord->R11;
+    case 12:
+        return ContextRecord->R12;
+    case 13:
+        return ContextRecord->R13;
+    case 14:
+        return ContextRecord->R14;
+    case 15:
+        return ContextRecord->R15;
+    default:
+        std::terminate();
+    }
+}
+
+struct HandlerData {
+    UserCallbacks cb;
+    std::function<void(const u8*)> invalidate_block;
+};
+
+// https://msdn.microsoft.com/en-us/library/b6sf5kbd.aspx
+static EXCEPTION_DISPOSITION ExceptionHandler(
+    PEXCEPTION_RECORD ExceptionRecord,
+    ULONG64 EstablisherFrame,
+    PCONTEXT ContextRecord,
+    PDISPATCHER_CONTEXT DispatcherContext
+) {
+    UNUSED(ExceptionRecord, EstablisherFrame);
+
+    const HandlerData& handler_data = *reinterpret_cast<HandlerData*>(DispatcherContext->HandlerData);
+    const UserCallbacks* cb = &handler_data.cb;
+    const MovInstType mov_type = cb->fast_mem_base ? MovInstType::FastMemBase : MovInstType::PageTable;
+
+    const u8* code = reinterpret_cast<u8*>(ContextRecord->Rip);
+    auto mov_inst = ParseX64MovInstruction(code, mov_type);
+    if (!mov_inst) {
+        printf("Could not parse mov!\n");
+        return ExceptionContinueSearch;
+    }
+
+    // printf("direction = %s\n", mem_access->is_write ? "write" : "read");
+    // printf("bit_size  = %zu\n", mem_access->bit_size);
+    // printf("vaddr_reg = %zu\n", mem_access->vaddr_x64_register);
+    // printf("value_reg = %zu\n", mem_access->value_x64_register);
+
+    if (mov_inst->is_write) {
+        u64 src = GetRegister(ContextRecord, mov_inst->value_x64_register);
+        u32 vaddr = static_cast<u32>(GetRegister(ContextRecord, mov_inst->vaddr_x64_register));
+        switch (mov_inst->bit_size) {
+        case 8:
+            cb->memory.Write8(vaddr, static_cast<u8>(src));
+            break;
+        case 16:
+            cb->memory.Write16(vaddr, static_cast<u16>(src));
+            break;
+        case 32:
+            cb->memory.Write32(vaddr, static_cast<u32>(src));
+            break;
+        case 64:
+            cb->memory.Write64(vaddr, src);
+            break;
+        default:
+            return ExceptionContinueSearch;
+        }
+    } else {
+        u64& dest = GetRegister(ContextRecord, mov_inst->value_x64_register);
+        u32 vaddr = static_cast<u32>(GetRegister(ContextRecord, mov_inst->vaddr_x64_register));
+        switch (mov_inst->bit_size) {
+        case 8:
+            dest = cb->memory.Read8(vaddr);
+            break;
+        case 16:
+            dest = cb->memory.Read16(vaddr);
+            break;
+        case 32:
+            dest = cb->memory.Read32(vaddr);
+            break;
+        case 64:
+            dest = cb->memory.Read64(vaddr);
+            break;
+        default:
+            return ExceptionContinueSearch;
+        }
+    }
+
+    handler_data.invalidate_block(code);
+
+    ContextRecord->Rip = reinterpret_cast<DWORD64>(mov_inst->after_instruction);
+    return ExceptionContinueExecution;
+}
+
+static const u8* EmitExceptionHandler(BlockOfCode* code) {
+    code->align(16);
+    const u8* except_handler = code->getCurr();
+    code->mov(code->rax, reinterpret_cast<u64>(&ExceptionHandler));
+    code->jmp(code->rax);
+    return except_handler;
+}
+
 struct BlockOfCode::ExceptionHandler::Impl final {
-    Impl(RUNTIME_FUNCTION* rfuncs_, const u8* base_ptr) : rfuncs(rfuncs_) {
+    Impl(RUNTIME_FUNCTION* rfuncs_, const u8* base_ptr, HandlerData* handler_data) : rfuncs(rfuncs_), exception_handler_data(handler_data) {
         RtlAddFunctionTable(rfuncs, 1, reinterpret_cast<DWORD64>(base_ptr));
     }
 
     ~Impl() {
         RtlDeleteFunctionTable(rfuncs);
+        exception_handler_data->~HandlerData();
     }
 
-private:
-    RUNTIME_FUNCTION* rfuncs = nullptr;
+    RUNTIME_FUNCTION* rfuncs;
+    HandlerData* exception_handler_data;
 };
 
 BlockOfCode::ExceptionHandler::ExceptionHandler() = default;
 BlockOfCode::ExceptionHandler::~ExceptionHandler() = default;
 
-void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code) {
+void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code, const UserCallbacks& cb) {
+    const u8* except_handler = EmitExceptionHandler(code);
     const auto prolog_info = GetPrologueInformation();
 
     code->align(16);
     UNWIND_INFO* unwind_info = static_cast<UNWIND_INFO*>(code->AllocateFromCodeSpace(sizeof(UNWIND_INFO)));
     unwind_info->Version = 1;
-    unwind_info->Flags = 0; // No special exception handling required.
+    unwind_info->Flags = UNW_FLAG_EHANDLER;
     unwind_info->SizeOfProlog = prolog_info.prolog_size;
     unwind_info->CountOfCodes = static_cast<UBYTE>(prolog_info.number_of_unwind_code_entries);
     unwind_info->FrameRegister = 0; // No frame register present
@@ -188,14 +484,28 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code) {
     const size_t size_of_unwind_code = sizeof(UNWIND_CODE) * prolog_info.unwind_code.size();
     UNWIND_CODE* unwind_code = static_cast<UNWIND_CODE*>(code->AllocateFromCodeSpace(size_of_unwind_code));
     memcpy(unwind_code, prolog_info.unwind_code.data(), size_of_unwind_code);
+    // UNWIND_INFO::ExceptionInfo field:
+    UNW_EXCEPTION_INFO* except_info = static_cast<UNW_EXCEPTION_INFO*>(code->AllocateFromCodeSpace(sizeof(UNW_EXCEPTION_INFO)));
+    except_info->ExceptionHandler = static_cast<ULONG>(except_handler - code->getCode());
+    // UNW_EXCEPTION_INFO::HandlerData field:
+    HandlerData* handler_data = new(code->AllocateFromCodeSpace(sizeof(HandlerData))) HandlerData;
+    handler_data->cb = cb;
 
     code->align(16);
     RUNTIME_FUNCTION* rfuncs = static_cast<RUNTIME_FUNCTION*>(code->AllocateFromCodeSpace(sizeof(RUNTIME_FUNCTION)));
-    rfuncs->BeginAddress = static_cast<DWORD>(reinterpret_cast<u8*>(code->run_code) - code->getCode());
+    rfuncs->BeginAddress = static_cast<DWORD>(1);
     rfuncs->EndAddress = static_cast<DWORD>(code->maxSize_);
     rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code->getCode());
 
-    impl = std::make_unique<Impl>(rfuncs, code->getCode());
+    impl = std::make_unique<Impl>(rfuncs, code->getCode(), handler_data);
+}
+
+bool BlockOfCode::ExceptionHandler::SupportsFastMem() const {
+    return true;
+}
+
+void BlockOfCode::ExceptionHandler::SetFastMemCallback(std::function<void(const u8*)> invalidate_block) {
+    impl->exception_handler_data->invalidate_block = invalidate_block;
 }
 
 } // namespace BackendX64

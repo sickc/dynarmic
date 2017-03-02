@@ -97,6 +97,8 @@ if (ARCHITECTURE_x86_64)
 
     if (WIN32)
         target_sources(dynarmic PRIVATE backend_x64/exception_handler_windows.cpp)
+    elseif (APPLE)
+        target_sources(dynarmic PRIVATE backend_x64/exception_handler_macos.cpp)
     else()
         target_sources(dynarmic PRIVATE backend_x64/exception_handler_generic.cpp)
     endif()

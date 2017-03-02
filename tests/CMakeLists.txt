@@ -36,6 +36,9 @@ create_target_directory_groups(dynarmic_tests)
 
 target_link_libraries(dynarmic_tests PRIVATE dynarmic boost catch)
 target_include_directories(dynarmic_tests PRIVATE . ../src)
-target_compile_options(dynarmic_tests PRIVATE ${DYNARMIC_CXX_FLAGS})
+target_compile_options(dynarmic_tests
+    PRIVATE
+        ${DYNARMIC_CXX_FLAGS}
+        $<$<BOOL:WIN32>:-DCATCH_CONFIG_NO_WINDOWS_SEH>)
 
 add_test(dynarmic_tests dynarmic_tests)

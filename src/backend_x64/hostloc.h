@@ -54,6 +54,7 @@ using HostLocList = std::initializer_list<HostLoc>;
 
 // RSP is preserved for function calls
 // R15 contains the JitState pointer
+// R14 is used by fastmem
 const HostLocList any_gpr = {
     HostLoc::RAX,
     HostLoc::RBX,
@@ -68,7 +69,6 @@ const HostLocList any_gpr = {
     HostLoc::R11,
     HostLoc::R12,
     HostLoc::R13,
-    HostLoc::R14,
 };
 
 const HostLocList any_xmm = {

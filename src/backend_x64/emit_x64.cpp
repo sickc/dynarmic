@@ -67,6 +67,7 @@ static void EraseInstruction(IR::Block& block, IR::Inst* inst) {
 
 EmitX64::EmitX64(BlockOfCode* code, UserCallbacks cb, Jit* jit_interface)
     : code(code), cb(cb), jit_interface(jit_interface) {
+    code->SetFastMemCallback([this](const u8* code) { this->FastMemInvalidate(code); });
 }
 
 EmitX64::BlockDescriptor EmitX64::Emit(IR::Block& block) {
@@ -2827,8 +2828,36 @@ void EmitX64::EmitSetExclusive(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) 
 }
 
 template <typename FunctionPointer>
-static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, UserCallbacks& cb, size_t bit_size, FunctionPointer fn) {
+static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, UserCallbacks& cb, size_t bit_size, FunctionPointer fn, bool can_fast_mem) {
+    using namespace Xbyak::util;
     auto args = reg_alloc.GetArgumentInfo(inst);
+
+    if (cb.fast_mem_base && can_fast_mem) {
+        Xbyak::Reg64 result = reg_alloc.ScratchGpr();
+        Xbyak::Reg64 vaddr = reg_alloc.UseGpr(args[0]);
+
+        code->mov(result.cvt32(), vaddr.cvt32()); // Zero extend
+        switch (bit_size) {
+        case 8:
+            code->movzx(result.cvt32(), code->byte[result + r14]);
+            break;
+        case 16:
+            code->movzx(result.cvt32(), word[result + r14]);
+            break;
+        case 32:
+            code->mov(result.cvt32(), dword[result + r14]);
+            break;
+        case 64:
+            code->mov(result.cvt64(), qword[result + r14]);
+            break;
+        default:
+            ASSERT_MSG(false, "Invalid bit_size");
+            break;
+        }
+
+        reg_alloc.DefineValue(inst, result);
+        return;
+    }
 
     if (!cb.page_table) {
         reg_alloc.HostCall(inst, args[0]);
@@ -2836,22 +2865,27 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
         return;
     }
 
-
     reg_alloc.UseScratch(args[0], ABI_PARAM1);
 
     Xbyak::Reg64 result = reg_alloc.ScratchGpr({ABI_RETURN});
     Xbyak::Reg32 vaddr = code->ABI_PARAM1.cvt32();
     Xbyak::Reg64 page_index = reg_alloc.ScratchGpr();
     Xbyak::Reg64 page_offset = reg_alloc.ScratchGpr();
+    Xbyak::Reg64 page_table_base = cb.fast_mem_base ? code->ABI_RETURN : r14;
 
     Xbyak::Label abort, end;
 
-    code->mov(result, reinterpret_cast<u64>(cb.page_table));
+    if (cb.fast_mem_base) {
+        // We have cb.fast_mem_base in r14.
+        code->mov(page_table_base, reinterpret_cast<u64>(cb.page_table));
+    }
     code->mov(page_index.cvt32(), vaddr);
     code->shr(page_index.cvt32(), 12);
-    code->mov(result, qword[result + page_index * 8]);
-    code->test(result, result);
-    code->jz(abort);
+    code->mov(result, qword[page_table_base + page_index * 8]);
+    if (!can_fast_mem) {
+        code->test(result, result);
+        code->jz(abort);
+    }
     code->mov(page_offset.cvt32(), vaddr);
     code->and_(page_offset.cvt32(), 4095);
     switch (bit_size) {
@@ -2871,24 +2905,50 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
         ASSERT_MSG(false, "Invalid bit_size");
         break;
     }
-    code->jmp(end);
-    code->L(abort);
-    code->call(code->GetMemoryReadCallback(bit_size));
-    code->L(end);
-
-    reg_alloc.DefineValue(inst, result);
+    if (!can_fast_mem) {
+        code->jmp(end);
+        code->L(abort);
+        code->CallFunction(fn);
+        code->L(end);
+    }
 }
 
 template<typename FunctionPointer>
-static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, UserCallbacks& cb, size_t bit_size, FunctionPointer fn) {
+static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, UserCallbacks& cb, size_t bit_size, FunctionPointer fn, bool can_fast_mem) {
+    using namespace Xbyak::util;
+
     auto args = reg_alloc.GetArgumentInfo(inst);
+
+    if (cb.fast_mem_base && can_fast_mem) {
+        Xbyak::Reg64 vaddr = reg_alloc.UseScratchGpr(args[0]);
+        Xbyak::Reg64 value = reg_alloc.UseGpr(args[1]);
+
+        code->mov(vaddr.cvt32(), vaddr.cvt32()); // Zero extend
+        switch (bit_size) {
+        case 8:
+            code->mov(code->byte[vaddr + r14], value.cvt8());
+            break;
+        case 16:
+            code->mov(word[vaddr + r14], value.cvt16());
+            break;
+        case 32:
+            code->mov(dword[vaddr + r14], value.cvt32());
+            break;
+        case 64:
+            code->mov(qword[vaddr + r14], value.cvt64());
+            break;
+        default:
+            ASSERT_MSG(false, "Invalid bit_size");
+            break;
+        }
+        return;
+    }
 
     if (!cb.page_table) {
         reg_alloc.HostCall(nullptr, args[0], args[1]);
         code->CallFunction(fn);
         return;
     }
-
 
     reg_alloc.ScratchGpr({ABI_RETURN});
     reg_alloc.UseScratch(args[0], ABI_PARAM1);
@@ -2898,15 +2958,21 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
     Xbyak::Reg64 value = code->ABI_PARAM2;
     Xbyak::Reg64 page_index = reg_alloc.ScratchGpr();
     Xbyak::Reg64 page_offset = reg_alloc.ScratchGpr();
+    Xbyak::Reg64 page_table_base = cb.fast_mem_base ? rax : r14;
 
     Xbyak::Label abort, end;
 
-    code->mov(rax, reinterpret_cast<u64>(cb.page_table));
+    if (cb.fast_mem_base) {
+        // We have cb.fast_mem_base in r14.
+        code->mov(page_table_base, reinterpret_cast<u64>(cb.page_table));
+    }
     code->mov(page_index.cvt32(), vaddr);
     code->shr(page_index.cvt32(), 12);
     code->mov(rax, qword[rax + page_index * 8]);
-    code->test(rax, rax);
-    code->jz(abort);
+    if (!can_fast_mem) {
+        code->test(rax, rax);
+        code->jz(abort);
+    }
     code->mov(page_offset.cvt32(), vaddr);
     code->and_(page_offset.cvt32(), 4095);
     switch (bit_size) {
@@ -2926,42 +2992,46 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
         ASSERT_MSG(false, "Invalid bit_size");
         break;
     }
-    code->jmp(end);
-    code->L(abort);
-    code->call(code->GetMemoryWriteCallback(bit_size));
-    code->L(end);
+    if (!can_fast_mem) {
+        code->jmp(end);
+        code->L(abort);
+        code->CallFunction(fn);
+        code->L(end);
+    }
 }
 
-void EmitX64::EmitReadMemory8(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    ReadMemory(code, reg_alloc, inst, cb, 8, cb.memory.Read8);
+#define CAN_FAST_MEM code->SupportsFastMem() && do_not_fastmem.count(block.Location().UniqueHash()) == 0
+
+void EmitX64::EmitReadMemory8(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    ReadMemory(code, reg_alloc, inst, cb, 8, cb.memory.Read8, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitReadMemory16(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    ReadMemory(code, reg_alloc, inst, cb, 16, cb.memory.Read16);
+void EmitX64::EmitReadMemory16(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    ReadMemory(code, reg_alloc, inst, cb, 16, cb.memory.Read16, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitReadMemory32(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    ReadMemory(code, reg_alloc, inst, cb, 32, cb.memory.Read32);
+void EmitX64::EmitReadMemory32(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    ReadMemory(code, reg_alloc, inst, cb, 32, cb.memory.Read32, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitReadMemory64(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    ReadMemory(code, reg_alloc, inst, cb, 64, cb.memory.Read64);
+void EmitX64::EmitReadMemory64(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    ReadMemory(code, reg_alloc, inst, cb, 64, cb.memory.Read64, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitWriteMemory8(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    WriteMemory(code, reg_alloc, inst, cb, 8, cb.memory.Write8);
+void EmitX64::EmitWriteMemory8(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    WriteMemory(code, reg_alloc, inst, cb, 8, cb.memory.Write8, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitWriteMemory16(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    WriteMemory(code, reg_alloc, inst, cb, 16, cb.memory.Write16);
+void EmitX64::EmitWriteMemory16(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    WriteMemory(code, reg_alloc, inst, cb, 16, cb.memory.Write16, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitWriteMemory32(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    WriteMemory(code, reg_alloc, inst, cb, 32, cb.memory.Write32);
+void EmitX64::EmitWriteMemory32(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    WriteMemory(code, reg_alloc, inst, cb, 32, cb.memory.Write32, CAN_FAST_MEM);
 }
 
-void EmitX64::EmitWriteMemory64(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
-    WriteMemory(code, reg_alloc, inst, cb, 64, cb.memory.Write64);
+void EmitX64::EmitWriteMemory64(RegAlloc& reg_alloc, IR::Block& block, IR::Inst* inst) {
+    WriteMemory(code, reg_alloc, inst, cb, 64, cb.memory.Write64, CAN_FAST_MEM);
 }
 
 template <typename FunctionPointer>
@@ -3562,6 +3632,26 @@ void EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
     const CodePtr patch_location = code->getCurr();
     code->mov(code->rcx, reinterpret_cast<u64>(target_code_ptr));
     code->EnsurePatchLocationSize(patch_location, 10);
+}
+
+void EmitX64::FastMemInvalidate(const u8* code_ptr) {
+    auto iter = std::find_if(block_descriptors.begin(), block_descriptors.end(), [code_ptr](const auto& pair) {
+        const BlockDescriptor& block = pair.second;
+        return code_ptr >= block.entrypoint && code_ptr < (static_cast<const u8*>(block.entrypoint) + block.size);
+    });
+
+    if (iter == block_descriptors.end())
+        return;
+
+    const IR::LocationDescriptor& descriptor = iter->second.start_location;
+    do_not_fastmem.emplace(descriptor.UniqueHash());
+
+    auto patch_it = patch_information.find(descriptor.UniqueHash());
+    if (patch_it != patch_information.end()) {
+        Unpatch(descriptor);
+    }
+
+    block_descriptors.erase(iter);
 }
 
 void EmitX64::ClearCache() {

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -105,6 +106,9 @@ public:
         }
     }
 
+    bool SupportsFastMem() const;
+    void SetFastMemCallback(std::function<void(const u8*)> invalidate_block);
+
     void int3() { db(0xCC); }
 
     /// Allocate memory of `size` bytes from the same block of memory the code is in.
@@ -161,7 +165,9 @@ private:
         ExceptionHandler();
         ~ExceptionHandler();
 
-        void Register(BlockOfCode* code);
+        void Register(BlockOfCode* code, const UserCallbacks& cb);
+        void SetFastMemCallback(std::function<void(const u8*)> invalidate_block);
+        bool SupportsFastMem() const;
     private:
         struct Impl;
         std::unique_ptr<Impl> impl;

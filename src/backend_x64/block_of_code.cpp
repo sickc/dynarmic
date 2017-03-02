@@ -44,7 +44,7 @@ BlockOfCode::BlockOfCode(UserCallbacks cb, LookupBlockCallback lookup_block, voi
 {
     GenRunCode();
     GenMemoryAccessors();
-    exception_handler.Register(this);
+    exception_handler.Register(this, cb);
     near_code_begin = getCurr();
     far_code_begin = getCurr() + FAR_CODE_OFFSET;
     ClearCache();
@@ -126,6 +126,9 @@ void BlockOfCode::GenRunCode() {
     //    that the stack is appropriately aligned for CALLs.
     ABI_PushCalleeSaveRegistersAndAdjustStack(this);
 
+    if (cb.fast_mem_base || cb.page_table) {
+        mov(r14, cb.fast_mem_base ? reinterpret_cast<u64>(cb.fast_mem_base) : reinterpret_cast<u64>(cb.page_table));
+    }
     mov(r15, ABI_PARAM1);
 
     L(enter_mxcsr_then_loop);
@@ -258,6 +261,14 @@ void BlockOfCode::SwitchToNearCode() {
     in_far_code = false;
     far_code_ptr = getCurr();
     SetCodePtr(near_code_ptr);
+}
+
+bool BlockOfCode::SupportsFastMem() const {
+    return exception_handler.SupportsFastMem();
+}
+
+void BlockOfCode::SetFastMemCallback(std::function<void(const u8*)> invalidate_block) {
+    exception_handler.SetFastMemCallback(invalidate_block);
 }
 
 void* BlockOfCode::AllocateFromCodeSpace(size_t alloc_size) {
