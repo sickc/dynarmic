@@ -457,7 +457,7 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code, const UserCallba
 
     code->align(16);
     RUNTIME_FUNCTION* rfuncs = static_cast<RUNTIME_FUNCTION*>(code->AllocateFromCodeSpace(sizeof(RUNTIME_FUNCTION)));
-    rfuncs->BeginAddress = static_cast<DWORD>(reinterpret_cast<u8*>(code->run_code) - code->getCode());
+    rfuncs->BeginAddress = static_cast<DWORD>(1);
     rfuncs->EndAddress = static_cast<DWORD>(code->maxSize_);
     rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code->getCode());
 
