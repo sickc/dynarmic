@@ -367,6 +367,11 @@ static u64& GetRegister(PCONTEXT ContextRecord, size_t reg_id) {
     }
 }
 
+struct HandlerData {
+    UserCallbacks cb;
+    std::function<void(const u8*)> invalidate_block;
+};
+
 // https://msdn.microsoft.com/en-us/library/b6sf5kbd.aspx
 static EXCEPTION_DISPOSITION ExceptionHandler(
     PEXCEPTION_RECORD ExceptionRecord,
@@ -376,7 +381,8 @@ static EXCEPTION_DISPOSITION ExceptionHandler(
 ) {
     UNUSED(ExceptionRecord, EstablisherFrame);
 
-    const UserCallbacks* cb = reinterpret_cast<UserCallbacks*>(DispatcherContext->HandlerData);
+    const HandlerData& handler_data = *reinterpret_cast<HandlerData*>(DispatcherContext->HandlerData);
+    const UserCallbacks* cb = &handler_data.cb;
     const MovInstType mov_type = cb->fast_mem_base ? MovInstType::FastMemBase : MovInstType::PageTable;
 
     const u8* code = reinterpret_cast<u8*>(ContextRecord->Rip);
@@ -431,6 +437,8 @@ static EXCEPTION_DISPOSITION ExceptionHandler(
         }
     }
 
+    handler_data.invalidate_block(code);
+
     ContextRecord->Rip = reinterpret_cast<DWORD64>(mov_inst->after_instruction);
     return ExceptionContinueExecution;
 }
@@ -440,21 +448,21 @@ static const u8* EmitExceptionHandler(BlockOfCode* code) {
     const u8* except_handler = code->getCurr();
     code->mov(code->rax, reinterpret_cast<u64>(&ExceptionHandler));
     code->jmp(code->rax);
-    printf("except_handler: %llx\n\n", reinterpret_cast<u64>(except_handler));
     return except_handler;
 }
 
 struct BlockOfCode::ExceptionHandler::Impl final {
-    Impl(RUNTIME_FUNCTION* rfuncs_, const u8* base_ptr) : rfuncs(rfuncs_) {
+    Impl(RUNTIME_FUNCTION* rfuncs_, const u8* base_ptr, HandlerData* handler_data) : rfuncs(rfuncs_), exception_handler_data(handler_data) {
         RtlAddFunctionTable(rfuncs, 1, reinterpret_cast<DWORD64>(base_ptr));
     }
 
     ~Impl() {
         RtlDeleteFunctionTable(rfuncs);
+        exception_handler_data->~HandlerData();
     }
 
-private:
-    RUNTIME_FUNCTION* rfuncs = nullptr;
+    RUNTIME_FUNCTION* rfuncs;
+    HandlerData* exception_handler_data;
 };
 
 BlockOfCode::ExceptionHandler::ExceptionHandler() = default;
@@ -480,8 +488,8 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code, const UserCallba
     UNW_EXCEPTION_INFO* except_info = static_cast<UNW_EXCEPTION_INFO*>(code->AllocateFromCodeSpace(sizeof(UNW_EXCEPTION_INFO)));
     except_info->ExceptionHandler = static_cast<ULONG>(except_handler - code->getCode());
     // UNW_EXCEPTION_INFO::HandlerData field:
-    void* cb_copy = code->AllocateFromCodeSpace(sizeof(UserCallbacks));
-    memcpy(cb_copy, &cb, sizeof(UserCallbacks));
+    HandlerData* handler_data = new(code->AllocateFromCodeSpace(sizeof(HandlerData))) HandlerData;
+    handler_data->cb = cb;
 
     code->align(16);
     RUNTIME_FUNCTION* rfuncs = static_cast<RUNTIME_FUNCTION*>(code->AllocateFromCodeSpace(sizeof(RUNTIME_FUNCTION)));
@@ -489,11 +497,15 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code, const UserCallba
     rfuncs->EndAddress = static_cast<DWORD>(code->maxSize_);
     rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code->getCode());
 
-    impl = std::make_unique<Impl>(rfuncs, code->getCode());
+    impl = std::make_unique<Impl>(rfuncs, code->getCode(), handler_data);
 }
 
 bool BlockOfCode::ExceptionHandler::SupportsFastMem() const {
     return true;
+}
+
+void BlockOfCode::ExceptionHandler::SetFastMemCallback(std::function<void(const u8*)> invalidate_block) {
+    impl->exception_handler_data->invalidate_block = invalidate_block;
 }
 
 } // namespace BackendX64

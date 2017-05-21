@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -103,6 +104,7 @@ public:
     }
 
     bool SupportsFastMem() const;
+    void SetFastMemCallback(std::function<void(const u8*)> invalidate_block);
 
     void int3() { db(0xCC); }
     void nop(size_t size = 1);
@@ -166,6 +168,7 @@ private:
         ~ExceptionHandler();
 
         void Register(BlockOfCode* code, const UserCallbacks& cb);
+        void SetFastMemCallback(std::function<void(const u8*)> invalidate_block);
         bool SupportsFastMem() const;
     private:
         struct Impl;

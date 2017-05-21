@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -95,6 +96,9 @@ private:
     void EmitPatchJmp(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr = nullptr);
     void EmitPatchMovRcx(CodePtr target_code_ptr = nullptr);
 
+    // FastMem
+    void FastMemInvalidate(const u8* code_ptr);
+
     // Global CPU information
     Xbyak::util::Cpu cpu_info;
 
@@ -104,6 +108,7 @@ private:
     Jit* jit_interface;
     std::unordered_map<u64, BlockDescriptor> block_descriptors;
     std::unordered_map<u64, PatchInformation> patch_information;
+    std::set<u64> do_not_fastmem;
 };
 
 } // namespace BackendX64

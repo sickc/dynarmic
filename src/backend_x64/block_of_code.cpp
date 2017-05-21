@@ -211,6 +211,11 @@ bool BlockOfCode::SupportsFastMem() const {
     return exception_handler.SupportsFastMem();
 }
 
+void BlockOfCode::SetFastMemCallback(std::function<void(const u8*)> invalidate_block) {
+    exception_handler.SetFastMemCallback(invalidate_block);
+}
+
+
 void BlockOfCode::nop(size_t size) {
     switch (size) {
     case 0:
