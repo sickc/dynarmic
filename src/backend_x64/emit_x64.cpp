@@ -3596,8 +3596,9 @@ void EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
 void EmitX64::FastMemInvalidate(const u8* code_ptr) {
     auto iter = std::find_if(block_descriptors.begin(), block_descriptors.end(), [code_ptr](const auto& pair) {
         const BlockDescriptor& block = pair.second;
-        return block.entrypoint >= code_ptr && code_ptr < (static_cast<const u8*>(block.entrypoint) + block.size);
+        return code_ptr >= block.entrypoint && code_ptr < (static_cast<const u8*>(block.entrypoint) + block.size);
     });
+
     if (iter == block_descriptors.end())
         return;
 
