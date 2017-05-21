@@ -2852,7 +2852,7 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
     if (!can_fast_mem) {
         code->jmp(end);
         code->L(abort);
-        code->call(code->GetMemoryReadCallback(bit_size));
+        code->CallFunction(fn);
         code->L(end);
     }
 }
@@ -2934,7 +2934,7 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
     if (!can_fast_mem) {
         code->jmp(end);
         code->L(abort);
-        code->call(code->GetMemoryWriteCallback(bit_size));
+        code->CallFunction(fn);
         code->L(end);
     }
 }
