@@ -207,6 +207,10 @@ void BlockOfCode::SwitchToNearCode() {
     SetCodePtr(near_code_ptr);
 }
 
+bool BlockOfCode::SupportsFastMem() const {
+    return exception_handler.SupportsFastMem();
+}
+
 void BlockOfCode::nop(size_t size) {
     switch (size) {
     case 0:

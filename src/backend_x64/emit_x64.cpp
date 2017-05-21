@@ -2778,7 +2778,7 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
     using namespace Xbyak::util;
     auto args = reg_alloc.GetArgumentInfo(inst);
 
-    if (cb.fast_mem_base) {
+    if (cb.fast_mem_base && code->SupportsFastMem()) {
         Xbyak::Reg64 fast_mem_base = reg_alloc.ScratchGpr({HostLoc::R14});
         Xbyak::Reg64 result = reg_alloc.ScratchGpr();
         Xbyak::Reg64 vaddr = reg_alloc.UseScratchGpr(args[0]);
@@ -2825,8 +2825,10 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
     code->mov(page_index.cvt32(), vaddr);
     code->shr(page_index.cvt32(), 12);
     code->mov(result, qword[result + page_index * 8]);
-    code->test(result, result);
-    code->jz(abort);
+    if (!code->SupportsFastMem()) {
+        code->test(result, result);
+        code->jz(abort);
+    }
     code->mov(page_offset.cvt32(), vaddr);
     code->and_(page_offset.cvt32(), 4095);
     switch (bit_size) {
@@ -2846,10 +2848,12 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
         ASSERT_MSG(false, "Invalid bit_size");
         break;
     }
-    code->jmp(end);
-    code->L(abort);
-    code->call(code->GetMemoryReadCallback(bit_size));
-    code->L(end);
+    if (!code->SupportsFastMem()) {
+        code->jmp(end);
+        code->L(abort);
+        code->call(code->GetMemoryReadCallback(bit_size));
+        code->L(end);
+    }
 }
 
 template<typename FunctionPointer>
@@ -2857,8 +2861,8 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
     using namespace Xbyak::util;
     auto args = reg_alloc.GetArgumentInfo(inst);
 
-    if (cb.fast_mem_base) {
-        Xbyak::Reg64 fast_mem_base = reg_alloc.ScratchGpr({ HostLoc::R14 });
+    if (cb.fast_mem_base && code->SupportsFastMem()) {
+        Xbyak::Reg64 fast_mem_base = reg_alloc.ScratchGpr({HostLoc::R14});
         Xbyak::Reg64 vaddr = reg_alloc.UseScratchGpr(args[0]);
         Xbyak::Reg64 value = reg_alloc.UseGpr(args[1]);
 
@@ -2903,8 +2907,10 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
     code->mov(page_index.cvt32(), vaddr);
     code->shr(page_index.cvt32(), 12);
     code->mov(rax, qword[rax + page_index * 8]);
-    code->test(rax, rax);
-    code->jz(abort);
+    if (!code->SupportsFastMem()) {
+        code->test(rax, rax);
+        code->jz(abort);
+    }
     code->mov(page_offset.cvt32(), vaddr);
     code->and_(page_offset.cvt32(), 4095);
     switch (bit_size) {
@@ -2924,10 +2930,12 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
         ASSERT_MSG(false, "Invalid bit_size");
         break;
     }
-    code->jmp(end);
-    code->L(abort);
-    code->call(code->GetMemoryWriteCallback(bit_size));
-    code->L(end);
+    if (!code->SupportsFastMem()) {
+        code->jmp(end);
+        code->L(abort);
+        code->call(code->GetMemoryWriteCallback(bit_size));
+        code->L(end);
+    }
 }
 
 void EmitX64::EmitReadMemory8(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {

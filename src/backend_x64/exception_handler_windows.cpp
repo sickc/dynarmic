@@ -171,7 +171,12 @@ struct EmulatedMemoryAccess {
     const u8* after_instruction;
 };
 
-static boost::optional<EmulatedMemoryAccess> ParseX64MovInstruction(const u8* code) {
+enum class MovInstType {
+    FastMemBase,
+    PageTable,
+};
+
+static boost::optional<EmulatedMemoryAccess> ParseX64MovInstruction(const u8* code, MovInstType type) {
     // We're only interested in a small number of mov/movzx instructions:
     // * 0x66 is the only legacy prefix and only appears at most once.
     // * REX prefix may or may not appear.
@@ -279,12 +284,33 @@ static boost::optional<EmulatedMemoryAccess> ParseX64MovInstruction(const u8* co
     }
     size_t index = sib_index + (rex_x ? 8 : 0);
     size_t base = sib_base + (rex_b ? 8 : 0);
-    if (base == 14) {
-        ret.vaddr_x64_register = index;
-    } else if (index == 14) {
-        ret.vaddr_x64_register = base;
-    } else {
-        // We only support [r14 + vaddr_reg] or [vaddr_reg + r14]
+    switch (type) {
+    case MovInstType::FastMemBase:
+        if (base == 14) {
+            ret.vaddr_x64_register = index;
+        } else if (index == 14) {
+            ret.vaddr_x64_register = base;
+        } else {
+            // We only support [r14 + vaddr_reg] or [vaddr_reg + r14]
+            return {};
+        }
+        break;
+    case MovInstType::PageTable:
+        if (ret.is_write) {
+            if (ret.value_x64_register != 2)
+                return {};
+            if (index != 0 && base != 0)
+                return {};
+            ret.vaddr_x64_register = 1;
+        } else {
+            if (ret.value_x64_register != 0)
+                return {};
+            if (index != 0 && base != 0)
+                return {};
+            ret.vaddr_x64_register = 1;
+        }
+        break;
+    default:
         return {};
     }
 
@@ -350,8 +376,11 @@ static EXCEPTION_DISPOSITION ExceptionHandler(
 ) {
     UNUSED(ExceptionRecord, EstablisherFrame);
 
+    const UserCallbacks* cb = reinterpret_cast<UserCallbacks*>(DispatcherContext->HandlerData);
+    const MovInstType mov_type = cb->fast_mem_base ? MovInstType::FastMemBase : MovInstType::PageTable;
+
     const u8* code = reinterpret_cast<u8*>(ContextRecord->Rip);
-    auto mov_inst = ParseX64MovInstruction(code);
+    auto mov_inst = ParseX64MovInstruction(code, mov_type);
     if (!mov_inst) {
         printf("Could not parse mov!\n");
         return ExceptionContinueSearch;
@@ -362,7 +391,6 @@ static EXCEPTION_DISPOSITION ExceptionHandler(
     // printf("vaddr_reg = %zu\n", mem_access->vaddr_x64_register);
     // printf("value_reg = %zu\n", mem_access->value_x64_register);
 
-    const UserCallbacks* cb = reinterpret_cast<UserCallbacks*>(DispatcherContext->HandlerData);
     if (mov_inst->is_write) {
         u64 src = GetRegister(ContextRecord, mov_inst->value_x64_register);
         u32 vaddr = static_cast<u32>(GetRegister(ContextRecord, mov_inst->vaddr_x64_register));
@@ -462,6 +490,10 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code, const UserCallba
     rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code->getCode());
 
     impl = std::make_unique<Impl>(rfuncs, code->getCode());
+}
+
+bool BlockOfCode::ExceptionHandler::SupportsFastMem() const {
+    return true;
 }
 
 } // namespace BackendX64

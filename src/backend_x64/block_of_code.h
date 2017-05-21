@@ -102,6 +102,8 @@ public:
         }
     }
 
+    bool SupportsFastMem() const;
+
     void int3() { db(0xCC); }
     void nop(size_t size = 1);
 
@@ -164,6 +166,7 @@ private:
         ~ExceptionHandler();
 
         void Register(BlockOfCode* code, const UserCallbacks& cb);
+        bool SupportsFastMem() const;
     private:
         struct Impl;
         std::unique_ptr<Impl> impl;

@@ -19,5 +19,9 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode*) {
     // Do nothing
 }
 
+bool BlockOfCode::ExceptionHandler::SupportsFastMem() const {
+    return false;
+}
+
 } // namespace BackendX64
 } // namespace Dynarmic
