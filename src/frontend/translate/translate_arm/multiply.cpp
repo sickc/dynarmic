@@ -49,14 +49,11 @@ bool ArmTranslatorVisitor::arm_SMLAL(Cond cond, bool S, Reg dHi, Reg dLo, Reg m,
         auto n64 = ir.SignExtendWordToLong(ir.GetRegister(n));
         auto m64 = ir.SignExtendWordToLong(ir.GetRegister(m));
         auto product = ir.Mul64(n64, m64);
-        auto addend = ir.Pack2x32To1x64(ir.GetRegister(dLo), ir.GetRegister(dHi));
+        auto addend = ir.GetRegisterPair(dLo, dHi);
         auto result = ir.Add64(product, addend);
-        auto lo = ir.LeastSignificantWord(result);
-        auto hi = ir.MostSignificantWord(result).result;
-        ir.SetRegister(dLo, lo);
-        ir.SetRegister(dHi, hi);
+        ir.SetRegisterPair(dLo, dHi, result);
         if (S) {
-            ir.SetNFlag(ir.MostSignificantBit(hi));
+            ir.SetNFlag(ir.MostSignificantBit64(result));
             ir.SetZFlag(ir.IsZero64(result));
         }
     }
@@ -72,12 +69,9 @@ bool ArmTranslatorVisitor::arm_SMULL(Cond cond, bool S, Reg dHi, Reg dLo, Reg m,
         auto n64 = ir.SignExtendWordToLong(ir.GetRegister(n));
         auto m64 = ir.SignExtendWordToLong(ir.GetRegister(m));
         auto result = ir.Mul64(n64, m64);
-        auto lo = ir.LeastSignificantWord(result);
-        auto hi = ir.MostSignificantWord(result).result;
-        ir.SetRegister(dLo, lo);
-        ir.SetRegister(dHi, hi);
+        ir.SetRegisterPair(dLo, dHi, result);
         if (S) {
-            ir.SetNFlag(ir.MostSignificantBit(hi));
+            ir.SetNFlag(ir.MostSignificantBit64(result));
             ir.SetZFlag(ir.IsZero64(result));
         }
     }
@@ -95,8 +89,7 @@ bool ArmTranslatorVisitor::arm_UMAAL(Cond cond, Reg dHi, Reg dLo, Reg m, Reg n) 
         auto n64 = ir.ZeroExtendWordToLong(ir.GetRegister(n));
         auto m64 = ir.ZeroExtendWordToLong(ir.GetRegister(m));
         auto result = ir.Add64(ir.Add64(ir.Mul64(n64, m64), hi64), lo64);
-        ir.SetRegister(dLo, ir.LeastSignificantWord(result));
-        ir.SetRegister(dHi, ir.MostSignificantWord(result).result);
+        ir.SetRegisterPair(dLo, dHi, result);
     }
     return true;
 }
@@ -107,16 +100,13 @@ bool ArmTranslatorVisitor::arm_UMLAL(Cond cond, bool S, Reg dHi, Reg dLo, Reg m,
     if (dLo == dHi)
         return UnpredictableInstruction();
     if (ConditionPassed(cond)) {
-        auto addend = ir.Pack2x32To1x64(ir.GetRegister(dLo), ir.GetRegister(dHi));
+        auto addend = ir.GetRegisterPair(dLo, dHi);
         auto n64 = ir.ZeroExtendWordToLong(ir.GetRegister(n));
         auto m64 = ir.ZeroExtendWordToLong(ir.GetRegister(m));
         auto result = ir.Add64(ir.Mul64(n64, m64), addend);
-        auto lo = ir.LeastSignificantWord(result);
-        auto hi = ir.MostSignificantWord(result).result;
-        ir.SetRegister(dLo, lo);
-        ir.SetRegister(dHi, hi);
+        ir.SetRegisterPair(dLo, dHi, result);
         if (S) {
-            ir.SetNFlag(ir.MostSignificantBit(hi));
+            ir.SetNFlag(ir.MostSignificantBit64(result));
             ir.SetZFlag(ir.IsZero64(result));
         }
     }
@@ -132,12 +122,9 @@ bool ArmTranslatorVisitor::arm_UMULL(Cond cond, bool S, Reg dHi, Reg dLo, Reg m,
         auto n64 = ir.ZeroExtendWordToLong(ir.GetRegister(n));
         auto m64 = ir.ZeroExtendWordToLong(ir.GetRegister(m));
         auto result = ir.Mul64(n64, m64);
-        auto lo = ir.LeastSignificantWord(result);
-        auto hi = ir.MostSignificantWord(result).result;
-        ir.SetRegister(dLo, lo);
-        ir.SetRegister(dHi, hi);
+        ir.SetRegisterPair(dLo, dHi, result);
         if (S) {
-            ir.SetNFlag(ir.MostSignificantBit(hi));
+            ir.SetNFlag(ir.MostSignificantBit64(result));
             ir.SetZFlag(ir.IsZero64(result));
         }
     }
@@ -159,10 +146,9 @@ bool ArmTranslatorVisitor::arm_SMLALxy(Cond cond, Reg dHi, Reg dLo, Reg m, bool 
         auto m16 = M ? ir.ArithmeticShiftRight(m32, ir.Imm8(16), ir.Imm1(0)).result
                      : ir.SignExtendHalfToWord(ir.LeastSignificantHalf(m32));
         auto product = ir.SignExtendWordToLong(ir.Mul(n16, m16));
-        auto addend = ir.Pack2x32To1x64(ir.GetRegister(dLo), ir.GetRegister(dHi));
+        auto addend = ir.GetRegisterPair(dLo, dHi);
         auto result = ir.Add64(product, addend);
-        ir.SetRegister(dLo, ir.LeastSignificantWord(result));
-        ir.SetRegister(dHi, ir.MostSignificantWord(result).result);
+        ir.SetRegisterPair(dLo, dHi, result);
     }
     return true;
 }
@@ -333,10 +319,9 @@ bool ArmTranslatorVisitor::arm_SMLALD(Cond cond, Reg dHi, Reg dLo, Reg m, bool M
             std::swap(m_lo, m_hi);
         auto product_lo = ir.SignExtendWordToLong(ir.Mul(n_lo, m_lo));
         auto product_hi = ir.SignExtendWordToLong(ir.Mul(n_hi, m_hi));
-        auto addend = ir.Pack2x32To1x64(ir.GetRegister(dLo), ir.GetRegister(dHi));
+        auto addend = ir.GetRegisterPair(dLo, dHi);
         auto result = ir.Add64(ir.Add64(product_lo, product_hi), addend);
-        ir.SetRegister(dLo, ir.LeastSignificantWord(result));
-        ir.SetRegister(dHi, ir.MostSignificantWord(result).result);
+        ir.SetRegisterPair(dLo, dHi, result);
     }
     return true;
 }
@@ -381,10 +366,9 @@ bool ArmTranslatorVisitor::arm_SMLSLD(Cond cond, Reg dHi, Reg dLo, Reg m, bool M
             std::swap(m_lo, m_hi);
         auto product_lo = ir.SignExtendWordToLong(ir.Mul(n_lo, m_lo));
         auto product_hi = ir.SignExtendWordToLong(ir.Mul(n_hi, m_hi));
-        auto addend = ir.Pack2x32To1x64(ir.GetRegister(dLo), ir.GetRegister(dHi));
+        auto addend = ir.GetRegisterPair(dLo, dHi);
         auto result = ir.Add64(ir.Sub64(product_lo, product_hi), addend);
-        ir.SetRegister(dLo, ir.LeastSignificantWord(result));
-        ir.SetRegister(dHi, ir.MostSignificantWord(result).result);
+        ir.SetRegisterPair(dLo, dHi, result);
     }
     return true;
 }
