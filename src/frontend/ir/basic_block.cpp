@@ -19,16 +19,16 @@
 namespace Dynarmic {
 namespace IR {
 
-void Block::AppendNewInst(Opcode opcode, std::initializer_list<IR::Value> args) {
-    IR::Inst* inst = new(instruction_alloc_pool->Alloc()) IR::Inst(opcode);
-    DEBUG_ASSERT(args.size() == inst->NumArgs());
+void Block::AppendNewInst(Opcode op, std::initializer_list<Value> args) {
+    instructions.push_back(AllocNewInst(op, args));
+}
 
-    std::for_each(args.begin(), args.end(), [&inst, index = size_t(0)](const auto& arg) mutable {
-        inst->SetArg(index, arg);
-        index++;
-    });
+Inst* Block::InsertInstBefore(Inst* pos, Opcode op, std::initializer_list<Value> args) {
+    return &*instructions.insert_before(iterator{pos}, AllocNewInst(op, args));
+}
 
-    instructions.push_back(inst);
+Inst* Block::InsertInstAfter(Inst* pos, Opcode op, std::initializer_list<Value> args) {
+    return &*instructions.insert_after(iterator{pos}, AllocNewInst(op, args));
 }
 
 LocationDescriptor Block::Location() const {
@@ -98,6 +98,18 @@ size_t& Block::CycleCount() {
 
 const size_t& Block::CycleCount() const {
     return cycle_count;
+}
+
+Inst* Block::AllocNewInst(Opcode opcode, std::initializer_list<IR::Value> args) {
+    Inst* inst = new(instruction_alloc_pool->Alloc()) Inst(opcode);
+    DEBUG_ASSERT(args.size() == inst->NumArgs());
+
+    std::for_each(args.begin(), args.end(), [&inst, index = size_t(0)](const auto& arg) mutable {
+        inst->SetArg(index, arg);
+        index++;
+    });
+
+    return inst;
 }
 
 static std::string TerminalToString(const Terminal& terminal_variant) {

@@ -77,6 +77,26 @@ public:
      */
     void AppendNewInst(Opcode op, std::initializer_list<Value> args);
 
+    /**
+     * Inserts a new instruction to this basic block immediately before instruction pos,
+     * handling any allocations necessary to do so.
+     *
+     * @param pos  Insertion point is immediately before this instruction.
+     * @param op   Opcode representing the instruction to add.
+     * @param args A sequence of Value instances used as arguments for the instruction.
+     */
+    Inst* InsertInstBefore(Inst* pos, Opcode op, std::initializer_list<Value> args);
+
+    /**
+     * Inserts a new instruction to this basic block immediately after instruction pos,
+     * handling any allocations necessary to do so.
+     *
+     * @param pos  Insertion point is immediately after this instruction.
+     * @param op   Opcode representing the instruction to add.
+     * @param args A sequence of Value instances used as arguments for the instruction.
+     */
+    Inst* InsertInstAfter(Inst* pos, Opcode op, std::initializer_list<Value> args);
+
     /// Gets the starting location for this basic block.
     LocationDescriptor Location() const;
     /// Gets the end location for this basic block.
@@ -119,6 +139,9 @@ public:
     const size_t& CycleCount() const;
 
 private:
+    /// Allocates a new instruction
+    Inst* AllocNewInst(Opcode opcode, std::initializer_list<IR::Value> args);
+
     /// Description of the starting location of this block
     LocationDescriptor location;
     /// Description of the end location of this block
