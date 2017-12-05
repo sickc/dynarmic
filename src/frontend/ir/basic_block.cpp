@@ -163,7 +163,9 @@ std::string DumpBlock(const IR::Block& block) {
         if (arg.IsEmpty()) {
             return "<null>";
         } else if (!arg.IsImmediate()) {
-            return fmt::format("%{}", inst_to_index.at(arg.GetInst()));
+            if (inst_to_index.count(arg.GetInst()) == 1)
+                return fmt::format("%{}", inst_to_index.at(arg.GetInst()));
+            return fmt::format("%[{:016x}]", reinterpret_cast<u64>(arg.GetInst()));
         }
         switch (arg.GetType()) {
         case Type::U1:
