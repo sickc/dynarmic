@@ -5,6 +5,7 @@
  */
 
 #include <array>
+#include <map>
 
 #include "common/assert.h"
 #include "common/common_types.h"
@@ -15,7 +16,7 @@
 namespace Dynarmic {
 namespace Optimization {
 
-void GetSetElimination(IR::Block& block) {
+static void ElimPass(IR::Block& block) {
     using Iterator = IR::Block::iterator;
     struct RegisterInfo {
         IR::Value register_value;
@@ -23,6 +24,7 @@ void GetSetElimination(IR::Block& block) {
         Iterator last_set_instruction;
     };
     std::array<RegisterInfo, 15> reg_info;
+    std::map<std::tuple<Arm::Reg, Arm::Reg>, RegisterInfo> pair_reg_info;
     std::array<RegisterInfo, 32> ext_reg_singles_info;
     std::array<RegisterInfo, 32> ext_reg_doubles_info;
     struct CpsrInfo {
@@ -32,6 +34,16 @@ void GetSetElimination(IR::Block& block) {
         RegisterInfo v;
         RegisterInfo ge;
     } cpsr_info;
+
+    const auto invalidate_associated_pair_registers = [&](Arm::Reg reg) {
+        for (auto iter = pair_reg_info.begin(); iter != pair_reg_info.end();) {
+            if (std::get<0>(iter->first) == reg || std::get<1>(iter->first) == reg) {
+                iter = pair_reg_info.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+    };
 
     const auto do_set = [&block](RegisterInfo& info, IR::Value value, Iterator set_inst) {
         if (info.set_instruction_present) {
@@ -58,8 +70,11 @@ void GetSetElimination(IR::Block& block) {
             Arm::Reg reg = inst->GetArg(0).GetRegRef();
             if (reg == Arm::Reg::PC)
                 break;
+
             size_t reg_index = static_cast<size_t>(reg);
             do_set(reg_info[reg_index], inst->GetArg(1), inst);
+
+            invalidate_associated_pair_registers(reg);
             break;
         }
         case IR::Opcode::GetRegister: {
@@ -67,6 +82,36 @@ void GetSetElimination(IR::Block& block) {
             ASSERT(reg != Arm::Reg::PC);
             size_t reg_index = static_cast<size_t>(reg);
             do_get(reg_info[reg_index], inst);
+
+            invalidate_associated_pair_registers(reg);
+            break;
+        }
+        case IR::Opcode::SetRegisterPair: {
+            Arm::Reg reg0 = inst->GetArg(0).GetRegRef();
+            Arm::Reg reg1 = inst->GetArg(1).GetRegRef();
+            reg_info[static_cast<size_t>(reg0)] = {};
+            reg_info[static_cast<size_t>(reg1)] = {};
+
+            auto p = std::make_pair(reg0, reg1);
+            if (pair_reg_info.count(p) == 0) {
+                invalidate_associated_pair_registers(reg0);
+                invalidate_associated_pair_registers(reg1);
+            }
+            do_set(pair_reg_info[p], inst->GetArg(2), inst);
+            break;
+        }
+        case IR::Opcode::GetRegisterPair: {
+            Arm::Reg reg0 = inst->GetArg(0).GetRegRef();
+            Arm::Reg reg1 = inst->GetArg(1).GetRegRef();
+            reg_info[static_cast<size_t>(reg0)] = {};
+            reg_info[static_cast<size_t>(reg1)] = {};
+
+            auto p = std::make_pair(reg0, reg1);
+            if (pair_reg_info.count(p) == 0) {
+                invalidate_associated_pair_registers(reg0);
+                invalidate_associated_pair_registers(reg1);
+            }
+            do_get(pair_reg_info[p], inst);
             break;
         }
         case IR::Opcode::SetExtendedRegister32: {
@@ -159,10 +204,58 @@ void GetSetElimination(IR::Block& block) {
             if (inst->ReadsFromCPSR() || inst->WritesToCPSR()) {
                 cpsr_info = {};
             }
+            if (inst->CausesCPUException()) {
+                reg_info = {};
+                pair_reg_info = {};
+                ext_reg_singles_info = {};
+                ext_reg_doubles_info = {};
+                cpsr_info = {};
+            }
             break;
         }
         }
     }
+}
+
+static void ReducePass(IR::Block& block) {
+    for (auto inst = block.begin(); inst != block.end(); ++inst) {
+        switch (inst->GetOpcode()) {
+        case IR::Opcode::SetRegisterPair: {
+            Arm::Reg reg_lo = inst->GetArg(0).GetRegRef();
+            Arm::Reg reg_hi = inst->GetArg(1).GetRegRef();
+            IR::Value pair_value = inst->GetArg(2);
+
+            IR::Inst* inst_lo = block.InsertInstBefore(&*inst, IR::Opcode::LeastSignificantWord, {pair_value});
+            IR::Inst* inst_hi = block.InsertInstBefore(&*inst, IR::Opcode::MostSignificantWord, {pair_value});
+            block.InsertInstBefore(&*inst, IR::Opcode::SetRegister, {IR::Value(reg_lo), IR::Value(inst_lo)});
+            block.InsertInstBefore(&*inst, IR::Opcode::SetRegister, {IR::Value(reg_hi), IR::Value(inst_hi)});
+
+            auto curr = inst--;
+            curr->Invalidate();
+            block.Instructions().erase(curr);
+            break;
+        }
+        case IR::Opcode::GetRegisterPair: {
+            Arm::Reg reg_lo = inst->GetArg(0).GetRegRef();
+            Arm::Reg reg_hi = inst->GetArg(1).GetRegRef();
+
+            IR::Inst* inst_lo = block.InsertInstBefore(&*inst, IR::Opcode::GetRegister, {IR::Value(reg_lo)});
+            IR::Inst* inst_hi = block.InsertInstBefore(&*inst, IR::Opcode::GetRegister, {IR::Value(reg_hi)});
+            IR::Inst* value = block.InsertInstBefore(&*inst, IR::Opcode::Pack2x32To1x64, {IR::Value(inst_lo), IR::Value(inst_hi)});
+
+            inst->ReplaceUsesWith(IR::Value(value));
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+void GetSetElimination(IR::Block& block) {
+    ElimPass(block);
+    ReducePass(block);
+    ElimPass(block);
 }
 
 } // namespace Optimization

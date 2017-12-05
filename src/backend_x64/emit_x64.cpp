@@ -167,6 +167,20 @@ void EmitX64::EmitGetExtendedRegister64(RegAlloc& reg_alloc, IR::Block&, IR::Ins
     reg_alloc.DefineValue(inst, result);
 }
 
+void EmitX64::EmitGetRegisterPair(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
+    Arm::Reg reg0 = inst->GetArg(0).GetRegRef();
+    Arm::Reg reg1 = inst->GetArg(1).GetRegRef();
+
+    Xbyak::Reg64 result = reg_alloc.ScratchGpr();
+    Xbyak::Reg64 tmp = reg_alloc.ScratchGpr();
+    code->mov(result.cvt32(), MJitStateReg(reg0));
+    code->mov(tmp.cvt32(), MJitStateReg(reg1));
+    code->shl(tmp, 32);
+    code->or_(result, tmp);
+
+    reg_alloc.DefineValue(inst, result);
+}
+
 void EmitX64::EmitSetRegister(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
     auto args = reg_alloc.GetArgumentInfo(inst);
     Arm::Reg reg = inst->GetArg(0).GetRegRef();
@@ -192,6 +206,17 @@ void EmitX64::EmitSetExtendedRegister64(RegAlloc& reg_alloc, IR::Block&, IR::Ins
     ASSERT(Arm::IsDoubleExtReg(reg));
     Xbyak::Xmm source = reg_alloc.UseXmm(args[1]);
     code->movsd(MJitStateExtReg(reg), source);
+}
+
+void EmitX64::EmitSetRegisterPair(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
+    auto args = reg_alloc.GetArgumentInfo(inst);
+    Arm::Reg reg0 = inst->GetArg(0).GetRegRef();
+    Arm::Reg reg1 = inst->GetArg(1).GetRegRef();
+
+    Xbyak::Reg64 source = reg_alloc.UseScratchGpr(args[2]);
+    code->mov(MJitStateReg(reg0), source.cvt32());
+    code->shr(source, 32);
+    code->mov(MJitStateReg(reg1), source.cvt32());
 }
 
 void EmitX64::EmitGetCpsr(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
@@ -579,6 +604,14 @@ void EmitX64::EmitMostSignificantBit(RegAlloc& reg_alloc, IR::Block&, IR::Inst* 
     Xbyak::Reg32 result = reg_alloc.UseScratchGpr(args[0]).cvt32();
     // TODO: Flag optimization
     code->shr(result, 31);
+    reg_alloc.DefineValue(inst, result);
+}
+
+void EmitX64::EmitMostSignificantBit64(RegAlloc& reg_alloc, IR::Block&, IR::Inst* inst) {
+    auto args = reg_alloc.GetArgumentInfo(inst);
+    Xbyak::Reg64 result = reg_alloc.UseScratchGpr(args[0]);
+    // TODO: Flag optimization
+    code->shr(result, 63);
     reg_alloc.DefineValue(inst, result);
 }
 

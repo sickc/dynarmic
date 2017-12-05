@@ -60,6 +60,11 @@ Value IREmitter::GetExtendedRegister(Arm::ExtReg reg) {
     ASSERT_MSG(false, "Invalid reg.");
 }
 
+Value IREmitter::GetRegisterPair(Arm::Reg low_reg, Arm::Reg high_reg) {
+    ASSERT(low_reg != Arm::Reg::PC && high_reg != Arm::Reg::PC);
+    return Inst(Opcode::GetRegisterPair, {Value(low_reg), Value(high_reg)});
+}
+
 void IREmitter::SetRegister(const Arm::Reg reg, const Value& value) {
     ASSERT(reg != Arm::Reg::PC);
     Inst(Opcode::SetRegister, { Value(reg), value });
@@ -73,6 +78,11 @@ void IREmitter::SetExtendedRegister(const Arm::ExtReg reg, const Value& value) {
     } else {
         ASSERT_MSG(false, "Invalid reg.");
     }
+}
+
+void IREmitter::SetRegisterPair(Arm::Reg low_reg, Arm::Reg high_reg, const Value& value) {
+    ASSERT(low_reg != Arm::Reg::PC && high_reg != Arm::Reg::PC);
+    Inst(Opcode::SetRegisterPair, {Value(low_reg), Value(high_reg), value});
 }
 
 void IREmitter::ALUWritePC(const Value& value) {
@@ -189,6 +199,10 @@ Value IREmitter::LeastSignificantByte(const Value& value) {
 
 Value IREmitter::MostSignificantBit(const Value& value) {
     return Inst(Opcode::MostSignificantBit, {value});
+}
+
+Value IREmitter::MostSignificantBit64(const Value& value) {
+    return Inst(Opcode::MostSignificantBit64, {value});
 }
 
 Value IREmitter::IsZero(const Value& value) {

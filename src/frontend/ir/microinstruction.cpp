@@ -130,6 +130,7 @@ bool Inst::ReadsFromCoreRegister() const {
     case Opcode::GetRegister:
     case Opcode::GetExtendedRegister32:
     case Opcode::GetExtendedRegister64:
+    case Opcode::GetRegisterPair:
         return true;
 
     default:
@@ -142,6 +143,7 @@ bool Inst::WritesToCoreRegister() const {
     case Opcode::SetRegister:
     case Opcode::SetExtendedRegister32:
     case Opcode::SetExtendedRegister64:
+    case Opcode::SetRegisterPair:
     case Opcode::BXWritePC:
         return true;
 

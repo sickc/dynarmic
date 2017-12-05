@@ -72,8 +72,10 @@ public:
 
     Value GetRegister(Arm::Reg source_reg);
     Value GetExtendedRegister(Arm::ExtReg source_reg);
+    Value GetRegisterPair(Arm::Reg low_reg, Arm::Reg high_reg);
     void SetRegister(const Arm::Reg dest_reg, const Value& value);
     void SetExtendedRegister(const Arm::ExtReg dest_reg, const Value& value);
+    void SetRegisterPair(Arm::Reg low_reg, Arm::Reg high_reg, const Value& value);
 
     void ALUWritePC(const Value& value);
     void BranchWritePC(const Value& value);
@@ -104,6 +106,7 @@ public:
     Value LeastSignificantHalf(const Value& value);
     Value LeastSignificantByte(const Value& value);
     Value MostSignificantBit(const Value& value);
+    Value MostSignificantBit64(const Value& value);
     Value IsZero(const Value& value);
     Value IsZero64(const Value& value);
 
