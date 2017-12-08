@@ -82,6 +82,7 @@ if (ARCHITECTURE_x86_64)
          backend_x64/hostloc.cpp
          backend_x64/interface_x64.cpp
          backend_x64/jitstate.cpp
+         backend_x64/parse_mov.cpp
          backend_x64/reg_alloc.cpp
 
          # Headers
@@ -92,13 +93,40 @@ if (ARCHITECTURE_x86_64)
          backend_x64/hostloc.h
          backend_x64/jitstate.h
          backend_x64/oparg.h
+         backend_x64/parse_mov.h
          backend_x64/reg_alloc.h
     )
 
     if (WIN32)
         target_sources(dynarmic PRIVATE backend_x64/exception_handler_windows.cpp)
     elseif (APPLE)
-        target_sources(dynarmic PRIVATE backend_x64/exception_handler_macos.cpp)
+        find_path(MACH_EXC_DEFS_DIR "mach/mach_exc.defs")
+        if (NOT MACH_EXC_DEFS_DIR)
+            message(WARNING "macOS fastmem disabled: unable to find mach/mach_exc.defs")
+            target_sources(dynarmic PRIVATE backend_x64/exception_handler_generic.cpp)
+        else()
+            message(STATUS "mach/mach_exc.defs location: ${MACH_EXC_DEFS}")
+            execute_process(
+                COMMAND
+                    mkdir -p "${CMAKE_CURRENT_SOURCE_DIR}/backend_x64/mig"
+                COMMAND
+                    mig
+                    -arch x86_64
+                    -user "${CMAKE_CURRENT_SOURCE_DIR}/backend_x64/mig/mach_exc_user.c"
+                    -header "${CMAKE_CURRENT_SOURCE_DIR}/backend_x64/mig/mach_exc_user.h"
+                    -server "${CMAKE_CURRENT_SOURCE_DIR}/backend_x64/mig/mach_exc_server.c"
+                    -sheader "${CMAKE_CURRENT_SOURCE_DIR}/backend_x64/mig/mach_exc_server.h"
+                    "${MACH_EXC_DEFS_DIR}/mach/mach_exc.defs"
+            )
+            target_sources(dynarmic PRIVATE 
+                # Source files
+                backend_x64/mig/mach_exc_server.c
+                backend_x64/exception_handler_macos.cpp
+
+                # Headers
+                backend_x64/mig/mach_exc_server.h
+            )
+        endif()
     else()
         target_sources(dynarmic PRIVATE backend_x64/exception_handler_generic.cpp)
     endif()

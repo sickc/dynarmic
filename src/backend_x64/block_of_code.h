@@ -172,6 +172,7 @@ private:
         struct Impl;
         std::unique_ptr<Impl> impl;
     };
+    friend class ExceptionHandler;
     ExceptionHandler exception_handler;
 
     Xbyak::util::Cpu cpu_info;
