@@ -48,7 +48,7 @@ static void ExceptionHandler() {
     while (true) {
         mr = mach_msg(&request.head, MACH_RCV_MSG | MACH_RCV_LARGE, 0, sizeof(request), server_port, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
         if (mr != MACH_MSG_SUCCESS) {
-            ASSERT_MSG(false, "dynarmic: macOS ExceptionHandler: Failed to receive mach message. error: %#08x (%s)", mr, mach_error_string(mr));
+            fprintf(stderr, "dynarmic: macOS ExceptionHandler: Failed to receive mach message. error: %#08x (%s)", mr, mach_error_string(mr));
             return;
         }
 
@@ -59,7 +59,7 @@ static void ExceptionHandler() {
 
         mr = mach_msg(&reply.head, MACH_SEND_MSG, reply.head.msgh_size, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
         if (mr != MACH_MSG_SUCCESS){
-            ASSERT_MSG(false, "dynarmic: macOS ExceptionHandler: Failed to send mach message. error: %#08x (%s)", mr, mach_error_string(mr));
+            fprintf(stderr, "dynarmic: macOS ExceptionHandler: Failed to send mach message. error: %#08x (%s)", mr, mach_error_string(mr));
             return;
         }
     }
@@ -117,6 +117,8 @@ mig_external kern_return_t catch_mach_exception_raise_state(
         return KERN_FAILURE;
     }
 
+    // fprintf(stderr, "rip 0x%08llx\n", x64_state->__rip);
+
     x64_state->__rsp -= sizeof(u64);
     *reinterpret_cast<u64*>(x64_state->__rsp) = x64_state->__rip;
     x64_state->__rip = iter->second.thunk_address;
@@ -133,7 +135,7 @@ static void Init() {
     #define KCHECK(x) if ((x) != KERN_SUCCESS) { printf("fastmem init failure at %s\n", #x); return; }
     KCHECK(mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port));
     KCHECK(mach_port_insert_right(mach_task_self(), server_port, server_port, MACH_MSG_TYPE_MAKE_SEND));
-    KCHECK(thread_set_exception_ports(mach_thread_self(), EXC_MASK_BAD_ACCESS, server_port, EXCEPTION_STATE | MACH_EXCEPTION_CODES, x86_THREAD_STATE64));
+    KCHECK(task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS, server_port, EXCEPTION_STATE | MACH_EXCEPTION_CODES, x86_THREAD_STATE64));
     #undef KCHECK
 
     if (!initialized)
@@ -180,7 +182,6 @@ struct BlockOfCode::ExceptionHandler::Impl final {
             ASSERT(!(inst->index == 14 && inst->base == 14));
             mem_vaddr_reg = inst->index == 14 ? inst->base : inst->index;
         } else {
-            ASSERT(inst->index == 0 || inst->base == 0);
             mem_vaddr_reg = impl->code->ABI_PARAM1.getIdx();
         }
 
@@ -227,9 +228,8 @@ struct BlockOfCode::ExceptionHandler::Impl final {
         }
 
         impl->invalidate_block(reinterpret_cast<const u8*>(reg_state->rip));
-        printf("%llx -> %llx\n", reg_state->rip, reinterpret_cast<u64>(inst->next_instruction));
+        // printf("%llx -> %llx\n", reg_state->rip, reinterpret_cast<u64>(inst->next_instruction));
         reg_state->rip = reinterpret_cast<u64>(inst->next_instruction);
-        reg_state->rflags &= 0xFFFFFFFFFFFFFEFFull;
     }
 };
 

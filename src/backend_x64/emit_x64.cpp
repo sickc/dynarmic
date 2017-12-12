@@ -2832,33 +2832,6 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
     using namespace Xbyak::util;
     auto args = reg_alloc.GetArgumentInfo(inst);
 
-    if (cb.fast_mem_base && can_fast_mem) {
-        Xbyak::Reg64 result = reg_alloc.ScratchGpr();
-        Xbyak::Reg64 vaddr = reg_alloc.UseGpr(args[0]);
-
-        code->mov(result.cvt32(), vaddr.cvt32()); // Zero extend
-        switch (bit_size) {
-        case 8:
-            code->movzx(result.cvt32(), code->byte[result + r14]);
-            break;
-        case 16:
-            code->movzx(result.cvt32(), word[result + r14]);
-            break;
-        case 32:
-            code->mov(result.cvt32(), dword[result + r14]);
-            break;
-        case 64:
-            code->mov(result.cvt64(), qword[result + r14]);
-            break;
-        default:
-            ASSERT_MSG(false, "Invalid bit_size");
-            break;
-        }
-
-        reg_alloc.DefineValue(inst, result);
-        return;
-    }
-
     if (!cb.page_table) {
         reg_alloc.HostCall(inst, args[0]);
         code->CallFunction(fn);
@@ -2867,39 +2840,34 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
 
     reg_alloc.UseScratch(args[0], ABI_PARAM1);
 
-    Xbyak::Reg64 result = reg_alloc.ScratchGpr({ABI_RETURN});
+    Xbyak::Reg64 result = can_fast_mem ? reg_alloc.ScratchGpr() : reg_alloc.ScratchGpr({ABI_RETURN});
     Xbyak::Reg32 vaddr = code->ABI_PARAM1.cvt32();
     Xbyak::Reg64 page_index = reg_alloc.ScratchGpr();
     Xbyak::Reg64 page_offset = reg_alloc.ScratchGpr();
-    Xbyak::Reg64 page_table_base = cb.fast_mem_base ? code->ABI_RETURN : r14;
 
     Xbyak::Label abort, end;
 
-    if (cb.fast_mem_base) {
-        // We have cb.fast_mem_base in r14.
-        code->mov(page_table_base, reinterpret_cast<u64>(cb.page_table));
-    }
     code->mov(page_index.cvt32(), vaddr);
     code->shr(page_index.cvt32(), 12);
-    code->mov(result, qword[page_table_base + page_index * 8]);
+    code->mov(page_index, qword[r14 + page_index * 8]);
     if (!can_fast_mem) {
-        code->test(result, result);
+        code->test(page_index, page_index);
         code->jz(abort);
     }
     code->mov(page_offset.cvt32(), vaddr);
     code->and_(page_offset.cvt32(), 4095);
     switch (bit_size) {
     case 8:
-        code->movzx(result, code->byte[result + page_offset]);
+        code->movzx(result, code->byte[page_index + page_offset]);
         break;
     case 16:
-        code->movzx(result, word[result + page_offset]);
+        code->movzx(result, word[page_index + page_offset]);
         break;
     case 32:
-        code->mov(result.cvt32(), dword[result + page_offset]);
+        code->mov(result.cvt32(), dword[page_index + page_offset]);
         break;
     case 64:
-        code->mov(result.cvt64(), qword[result + page_offset]);
+        code->mov(result.cvt64(), qword[page_index + page_offset]);
         break;
     default:
         ASSERT_MSG(false, "Invalid bit_size");
@@ -2908,9 +2876,11 @@ static void ReadMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, U
     if (!can_fast_mem) {
         code->jmp(end);
         code->L(abort);
-        code->CallFunction(fn);
+        code->call(code->GetMemoryReadCallback(bit_size));
         code->L(end);
     }
+
+    reg_alloc.DefineValue(inst, result);
 }
 
 template<typename FunctionPointer>
@@ -2919,74 +2889,46 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
 
     auto args = reg_alloc.GetArgumentInfo(inst);
 
-    if (cb.fast_mem_base && can_fast_mem) {
-        Xbyak::Reg64 vaddr = reg_alloc.UseScratchGpr(args[0]);
-        Xbyak::Reg64 value = reg_alloc.UseGpr(args[1]);
-
-        code->mov(vaddr.cvt32(), vaddr.cvt32()); // Zero extend
-        switch (bit_size) {
-        case 8:
-            code->mov(code->byte[vaddr + r14], value.cvt8());
-            break;
-        case 16:
-            code->mov(word[vaddr + r14], value.cvt16());
-            break;
-        case 32:
-            code->mov(dword[vaddr + r14], value.cvt32());
-            break;
-        case 64:
-            code->mov(qword[vaddr + r14], value.cvt64());
-            break;
-        default:
-            ASSERT_MSG(false, "Invalid bit_size");
-            break;
-        }
-        return;
-    }
-
     if (!cb.page_table) {
         reg_alloc.HostCall(nullptr, args[0], args[1]);
         code->CallFunction(fn);
         return;
     }
 
-    reg_alloc.ScratchGpr({ABI_RETURN});
     reg_alloc.UseScratch(args[0], ABI_PARAM1);
-    reg_alloc.UseScratch(args[1], ABI_PARAM2);
+    if (!can_fast_mem) {
+        reg_alloc.ScratchGpr({ABI_RETURN});
+        reg_alloc.UseScratch(args[1], ABI_PARAM2);
+    }
 
     Xbyak::Reg32 vaddr = code->ABI_PARAM1.cvt32();
-    Xbyak::Reg64 value = code->ABI_PARAM2;
+    Xbyak::Reg64 value = can_fast_mem ? reg_alloc.UseGpr(args[1]) : code->ABI_PARAM2;
     Xbyak::Reg64 page_index = reg_alloc.ScratchGpr();
     Xbyak::Reg64 page_offset = reg_alloc.ScratchGpr();
-    Xbyak::Reg64 page_table_base = cb.fast_mem_base ? rax : r14;
 
     Xbyak::Label abort, end;
 
-    if (cb.fast_mem_base) {
-        // We have cb.fast_mem_base in r14.
-        code->mov(page_table_base, reinterpret_cast<u64>(cb.page_table));
-    }
     code->mov(page_index.cvt32(), vaddr);
     code->shr(page_index.cvt32(), 12);
-    code->mov(rax, qword[rax + page_index * 8]);
+    code->mov(page_index, qword[r14 + page_index * 8]);
     if (!can_fast_mem) {
-        code->test(rax, rax);
+        code->test(page_index, page_index);
         code->jz(abort);
     }
     code->mov(page_offset.cvt32(), vaddr);
     code->and_(page_offset.cvt32(), 4095);
     switch (bit_size) {
     case 8:
-        code->mov(code->byte[rax + page_offset], value.cvt8());
+        code->mov(code->byte[page_index + page_offset], value.cvt8());
         break;
     case 16:
-        code->mov(word[rax + page_offset], value.cvt16());
+        code->mov(word[page_index + page_offset], value.cvt16());
         break;
     case 32:
-        code->mov(dword[rax + page_offset], value.cvt32());
+        code->mov(dword[page_index + page_offset], value.cvt32());
         break;
     case 64:
-        code->mov(qword[rax + page_offset], value.cvt64());
+        code->mov(qword[page_index + page_offset], value.cvt64());
         break;
     default:
         ASSERT_MSG(false, "Invalid bit_size");
@@ -2995,7 +2937,7 @@ static void WriteMemory(BlockOfCode* code, RegAlloc& reg_alloc, IR::Inst* inst, 
     if (!can_fast_mem) {
         code->jmp(end);
         code->L(abort);
-        code->CallFunction(fn);
+        code->call(code->GetMemoryWriteCallback(bit_size));
         code->L(end);
     }
 }

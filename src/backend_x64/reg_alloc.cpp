@@ -501,12 +501,12 @@ HostLoc RegAlloc::FindFreeSpill() const {
 }
 
 HostLocInfo& RegAlloc::LocInfo(HostLoc loc) {
-    ASSERT(loc != HostLoc::RSP && loc != HostLoc::R15);
+    ASSERT(loc != HostLoc::RSP && loc != HostLoc::R14 && loc != HostLoc::R15);
     return hostloc_info[static_cast<size_t>(loc)];
 }
 
 const HostLocInfo& RegAlloc::LocInfo(HostLoc loc) const {
-    ASSERT(loc != HostLoc::RSP && loc != HostLoc::R15);
+    ASSERT(loc != HostLoc::RSP && loc != HostLoc::R14 && loc != HostLoc::R15);
     return hostloc_info[static_cast<size_t>(loc)];
 }
 

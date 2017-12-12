@@ -113,6 +113,11 @@ void BlockOfCode::GenRunCode() {
     run_code_from = getCurr<RunCodeFromFuncType>();
 
     ABI_PushCalleeSaveRegistersAndAdjustStack(this);
+
+    if (cb.fast_mem_base || cb.page_table) {
+        mov(r14, cb.fast_mem_base ? reinterpret_cast<u64>(cb.fast_mem_base) : reinterpret_cast<u64>(cb.page_table));
+    }
+    
     mov(r15, ABI_PARAM1);
     SwitchMxcsrOnEntry();
     jmp(ABI_PARAM2);
