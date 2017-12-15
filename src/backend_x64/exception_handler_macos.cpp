@@ -12,12 +12,15 @@
 #include <mach/message.h>
 
 #include "backend_x64/block_of_code.h"
+#include "backend_x64/dwarf2_cfi_emitter.h"
 #include "backend_x64/parse_mov.h"
 #include "common/assert.h"
 #include "common/common_types.h"
 
 #define mig_external extern "C"
 #include "backend_x64/mig/mach_exc_server.h"
+
+extern "C" void __register_frame(void*);
 
 namespace Dynarmic {
 namespace BackendX64 {
@@ -231,6 +234,96 @@ struct BlockOfCode::ExceptionHandler::Impl final {
         // printf("%llx -> %llx\n", reg_state->rip, reinterpret_cast<u64>(inst->next_instruction));
         reg_state->rip = reinterpret_cast<u64>(inst->next_instruction);
     }
+
+    void EmitDwarf() {
+        DwarfCfiEmitter emit{code};
+
+        // Documentation:
+        // - http://www.dwarfstd.org/doc/DWARF4.pdf
+        // - https://refspecs.linuxfoundation.org/LSB_1.3.0/gLSB/gLSB/ehframehdr.html
+        // - https://www.airs.com/blog/archives/460
+        // - https://llvm.org/docs/ExceptionHandling.html
+        // - https://github.com/itanium-cxx-abi/cxx-abi/blob/master/exceptions.pdf
+        // - http://refspecs.linuxfoundation.org/abi-eh-1.22.html
+        // - lldb/source/Symbol/DWARFCallFrameInfo.cpp
+        // - https://www.uclibc.org/docs/psABI-x86_64.pdf
+        // - https://www.imperialviolet.org/2017/01/18/cfi.html
+
+        emit.Align();
+
+        // CIE
+
+        // length
+        u64 cie_position = emit.getCurr<u64>();
+        emit.dd(0);
+        // CIE_id
+        emit.dd(0);
+        // CIE format version number
+        emit.db(4);
+        // Augmentation
+        emit.db('z');
+        emit.db(0);
+        // Address size (in bytes)
+        emit.db(8);
+        // Segment selector size
+        emit.db(0); // Flat address space
+        // Code alignment factor
+        emit.WriteUleb128(Uleb128{1});
+        // Data alignment factor
+        emit.WriteUleb128(Uleb128{sizeof(u64)});
+        // Return address register
+        emit.WriteUleb128(DwarfCfiEmitter::RETURN_ADDRESS);
+        // Augmentation data
+        // z:
+        emit.WriteUleb128(Uleb128{0});
+        // Initial instructions
+        // We with for our CFA to be the value of RSP before we've been called.
+        // We also have our return address on the stack at this point.
+        // +0x0: 53              pushq  %rbx
+        // +0x1: 55              pushq  %rbp
+        // +0x2: 41 54           pushq  %r12
+        // +0x4: 41 55           pushq  %r13
+        // +0x6: 41 56           pushq  %r14
+        // +0x8: 41 57           pushq  %r15
+        // +0xa: 48 83 ec 08     subq   $0x8, %rsp  // This is already accounted for in the initial DefineCfa.
+        emit.DefineCfa(DwarfCfiEmitter::RSP, Uleb128{8});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::RETURN_ADDRESS, Sleb128{-1});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::RBX, Sleb128{-2});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::RBP, Sleb128{-3});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::R12, Sleb128{-4});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::R13, Sleb128{-5});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::R14, Sleb128{-6});
+        emit.OffsetExtendedSigned(DwarfCfiEmitter::R15, Sleb128{-7});
+        emit.Nop();
+        emit.Align();
+        {
+            u32 length = static_cast<u32>(emit.getCurr<u64>() - cie_position);
+            std::memcpy(reinterpret_cast<void*>(cie_position), &length, sizeof(u32));
+        }
+
+        // FDE
+
+        // length
+        u64 fde_position = emit.getCurr<u64>();
+        emit.dd(0);
+        // CIE location
+        emit.dd(static_cast<u32>(emit.getCurr<u64>() - cie_position));
+        // Address start
+        emit.dq(reinterpret_cast<u64>(code->getCode()));
+        // Range Length
+        emit.dq(static_cast<u64>(code->maxSize_));
+        // Instructions
+        emit.Nop();
+        emit.Align();
+        {
+            u32 length = static_cast<u32>(emit.getCurr<u64>() - fde_position);
+            std::memcpy(reinterpret_cast<void*>(fde_position), &length, sizeof(u32));
+        }
+
+        // Register
+
+        __register_frame((void*)fde_position);
+    }
 };
 
 BlockOfCode::ExceptionHandler::ExceptionHandler() {
@@ -338,6 +431,8 @@ void BlockOfCode::ExceptionHandler::Register(BlockOfCode* code, const UserCallba
         reinterpret_cast<u64>(code->top_ + code->maxSize_),
         reinterpret_cast<u64>(thunk_function)
     };
+
+    impl->EmitDwarf();
 }
 
 bool BlockOfCode::ExceptionHandler::SupportsFastMem() const {
