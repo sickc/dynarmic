@@ -102,7 +102,7 @@ static u32 GenRandomInst(u64 pc, bool is_last_inst) {
     }
 }
 
-static u32 GenFloatInst(u64 pc, bool is_last_inst) {
+/*static u32 GenFloatInst(u64 pc, bool is_last_inst) {
     static const std::vector<InstructionGenerator> instruction_generators = []{
         const std::vector<std::tuple<std::string, std::string, const char*>> list {
 #define INST(fn, name, bitstring) {#fn, #name, bitstring},
@@ -114,8 +114,6 @@ static u32 GenFloatInst(u64 pc, bool is_last_inst) {
         const std::vector<std::string> do_not_test {
             // QEMU's implementation of FCVT is incorrect
             "FCVT_float",
-            // Requires investigation (temporarily disabled).
-            "FDIV_1", "FDIV_2",
         };
 
         std::vector<InstructionGenerator> result;
@@ -142,7 +140,7 @@ static u32 GenFloatInst(u64 pc, bool is_last_inst) {
             return instruction;
         }
     }
-}
+}*/
 
 static void RunTestInstance(const Unicorn::RegisterArray& regs, const Unicorn::VectorArray& vecs, const size_t instructions_offset,
                             const std::vector<u32>& instructions, const u32 pstate, const u32 fpcr) {
@@ -265,7 +263,7 @@ TEST_CASE("A64: Single random instruction", "[a64]") {
     for (size_t iteration = 0; iteration < 100000; ++iteration) {
         std::generate(regs.begin(), regs.end(), []{ return RandInt<u64>(0, ~u64(0)); });
         std::generate(vecs.begin(), vecs.end(), RandomVector);
-        instructions[0] = GenRandomInst(0, true);
+        instructions[0] = 0x1e621820; // GenRandomInst(0, true);
         u32 pstate = RandInt<u32>(0, 0xF) << 28;
         u32 fpcr = RandInt<u32>(0, 0x3) << 22; // randomize RMode
 
@@ -378,7 +376,7 @@ TEST_CASE("A64: Floating point instructions", "[a64]") {
     for (size_t iteration = 0; iteration < 100000; ++iteration) {
         std::generate(regs.begin(), regs.end(), gen_float);
         std::generate(vecs.begin(), vecs.end(), gen_vector);
-        instructions[0] = GenFloatInst(0, true);
+        instructions[0] = 0x1e621820; // GenFloatInst(0, true);
         u32 pstate = RandInt<u32>(0, 0xF) << 28;
         u32 fpcr = RandInt<u32>(0, 0x3) << 22; // randomize RMode
 
