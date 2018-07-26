@@ -827,6 +827,77 @@ void EmitFPVectorToFixed(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
     const size_t fbits = inst->GetArg(1).GetU8();
     const auto rounding = static_cast<FP::RoundingMode>(inst->GetArg(2).GetU8());
 
+    if (code.DoesCpuSupport(Xbyak::util::Cpu::tAVX) && rounding != FP::RoundingMode::ToNearest_TieAwayFromZero) {
+        const Xbyak::Xmm src = ctx.reg_alloc.UseScratchXmm(args[0]);
+        const Xbyak::Xmm scratch = ctx.reg_alloc.ScratchXmm();
+        const Xbyak::Xmm lower_limit_mask = ctx.reg_alloc.ScratchXmm();
+        const Xbyak::Xmm upper_limit_mask = ctx.reg_alloc.ScratchXmm();
+
+        const int round_imm = [&]{
+            switch (rounding) {
+            case FP::RoundingMode::ToNearest_TieEven:
+                return 0b00;
+            case FP::RoundingMode::TowardsPlusInfinity:
+                return 0b10;
+            case FP::RoundingMode::TowardsMinusInfinity:
+                return 0b01;
+            case FP::RoundingMode::TowardsZero:
+                return 0b11;
+            default:
+                UNREACHABLE();
+            }
+            return 0;
+        }();
+
+        if (fbits != 0) {
+            const u64 scale_factor_scalar = static_cast<u64>((fbits + FPInfo<FPT>::exponent_bias) << FPInfo<FPT>::explicit_mantissa_width);
+            FCODE(vbroadcasts)(scratch, code.MConst(ptr, scale_factor_scalar));
+            FCODE(vmulp)(src, src, scratch);
+        }
+
+        FCODE(vroundp)(src, src, round_imm);
+
+        // Values should be in [fp_lower_limit, fp_upper_limit).
+        constexpr u64 fp_lower_limit = unsigned_
+                                     ? (fsize == 32 ? 0x00000000u : 0x0000000000000000u)
+                                     : (fsize == 32 ? 0xcf000000u : 0xc3e0000000000000u);
+        constexpr u64 fp_upper_limit = unsigned_
+                                     ? (fsize == 32 ? 0x4f800000u : 0x43f0000000000000u)
+                                     : (fsize == 32 ? 0x4f000000u : 0x43e0000000000000u);
+
+        //                        lower    upper
+        //                        limit    limit
+        //                        mask     mask
+        //
+        // src contains NaN       false    false
+        //
+        // src < lower            true     false
+        //
+        // lower <= src < upper   false    false
+        //
+        // src >= upper           false    true
+        //
+
+        if (fp_lower_limit == 0) {
+            FCODE(vxorp)(scratch, scratch, scratch);
+            FCODE(vcmpnge_uqp)(lower_limit_mask, scratch, src);
+        } else {
+            FCODE(vbroadcasts)(scratch, code.MConst(ptr, fp_lower_limit));
+            FCODE(vcmplt_oqp)(lower_limit_mask, scratch, src);
+        }
+
+        FCODE(vbroadcasts)(scratch, code.MConst(ptr, fp_upper_limit));
+        FCODE(vcmpge_oqp)(upper_limit_mask, src, scratch);
+
+        FCODE(vandnp)(src, upper_limit_mask, src);
+        FCODE(vandnp)(src, lower_limit_mask, src);
+
+        if (fp_lower_limit != 0) {
+        }
+
+        return;
+    }
+
     using fbits_list = mp::vllift<std::make_index_sequence<fsize>>;
     using rounding_list = mp::list<
         std::integral_constant<FP::RoundingMode, FP::RoundingMode::ToNearest_TieEven>,
