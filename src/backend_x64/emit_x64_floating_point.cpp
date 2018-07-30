@@ -733,7 +733,7 @@ static void EmitFPRecipStepFused(BlockOfCode& code, EmitContext& ctx, IR::Inst* 
             if ((FP::IsInf(b) && FP::IsZero(c)) || (FP::IsZero(b) && FP::IsInf(c))) {
                 return FP::FPValue<FPT, false, 0, 2>();
             }
-            return *FP::ProcessNaNs(b, c);
+            return *FP::ProcessNaNs(FP::FPNeg(b), c);
         });
         return;
     }

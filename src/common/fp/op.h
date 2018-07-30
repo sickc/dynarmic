@@ -7,6 +7,7 @@
 #pragma once
 
 #include "common/fp/op/FPMulAdd.h"
+#include "common/fp/op/FPNeg.h"
 #include "common/fp/op/FPRecipEstimate.h"
 #include "common/fp/op/FPRecipStepFused.h"
 #include "common/fp/op/FPRoundInt.h"
