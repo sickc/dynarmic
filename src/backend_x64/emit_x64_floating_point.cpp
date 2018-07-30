@@ -131,8 +131,8 @@ void ZeroIfNaN(BlockOfCode& code, Xbyak::Xmm xmm_value, Xbyak::Xmm xmm_scratch) 
     code.pand(xmm_value, xmm_scratch);
 }
 
-template<size_t fsize>
-void PreProcessNaNs(BlockOfCode& code, Xbyak::Xmm a, Xbyak::Xmm b, Xbyak::Label& end) {
+template<size_t fsize, typename NaNHandler>
+void PreProcessNaNs(BlockOfCode& code, Xbyak::Xmm a, Xbyak::Xmm b, Xbyak::Label& end, NaNHandler nan_handler) {
     using FPT = mp::unsigned_integer_of_size<fsize>;
 
     Xbyak::Label nan;
@@ -146,9 +146,7 @@ void PreProcessNaNs(BlockOfCode& code, Xbyak::Xmm a, Xbyak::Xmm b, Xbyak::Label&
     ABI_PushCallerSaveRegistersAndAdjustStackExcept(code, HostLocXmmIdx(a.getIdx()));
     code.movq(code.ABI_PARAM1, a);
     code.movq(code.ABI_PARAM2, b);
-    code.CallFunction(static_cast<FPT(*)(FPT, FPT)>([](FPT a, FPT b) -> FPT {
-        return *FP::ProcessNaNs(a, b);
-    }));
+    code.CallFunction(static_cast<FPT(*)(FPT, FPT)>(nan_handler));
     code.movq(a, code.ABI_RETURN);
     ABI_PopCallerSaveRegistersAndAdjustStackExcept(code, HostLocXmmIdx(a.getIdx()));
     code.add(rsp, 8);
@@ -257,8 +255,8 @@ void FPTwoOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, Function fn) {
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
-template <size_t fsize, typename PreprocessFunction, typename Function>
-void FPThreeOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, [[maybe_unused]] PreprocessFunction preprocess, Function fn) {
+template <size_t fsize, typename PreprocessFunction, typename Function, typename NaNHandler>
+void FPThreeOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, [[maybe_unused]] PreprocessFunction preprocess, Function fn, NaNHandler nan_handler) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
     Xbyak::Label end;
@@ -275,7 +273,7 @@ void FPThreeOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, [[maybe_unus
         DenormalsAreZero<fsize>(code, operand, gpr_scratch);
     }
     if (ctx.AccurateNaN() && !ctx.FPSCR_DN()) {
-        PreProcessNaNs<fsize>(code, result, operand, end);
+        PreProcessNaNs<fsize>(code, result, operand, end, nan_handler);
     }
     if constexpr (std::is_member_function_pointer_v<Function>) {
         (code.*fn)(result, operand);
@@ -297,7 +295,25 @@ void FPThreeOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, [[maybe_unus
 
 template <size_t fsize, typename Function>
 void FPThreeOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, Function fn) {
-    FPThreeOp<fsize>(code, ctx, inst, nullptr, fn);
+    using FPT = mp::unsigned_integer_of_size<fsize>;
+    const auto nan_handler = [](FPT a, FPT b) -> FPT {
+        return *FP::ProcessNaNs(a, b);
+    };
+    FPThreeOp<fsize>(code, ctx, inst, nullptr, fn, nan_handler);
+}
+
+template <size_t fsize, typename PreprocessFunction, typename Function>
+void FPThreeOp(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, PreprocessFunction preprocess, Function fn) {
+    using FPT = mp::unsigned_integer_of_size<fsize>;
+    const auto nan_handler = [](FPT a, FPT b) -> FPT {
+        return *FP::ProcessNaNs(a, b);
+    };
+    FPThreeOp<fsize>(code, ctx, inst, preprocess, fn, nan_handler);
+}
+
+template <size_t fsize, typename Function, typename NaNHandler>
+void FPThreeOpWithCustomNaNHandler(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, Function fn, NaNHandler nan_handler) {
+    FPThreeOp<fsize>(code, ctx, inst, nullptr, fn, nan_handler);
 }
 
 template <size_t fsize, typename Function, typename NaNHandler>
@@ -705,8 +721,23 @@ void EmitX64::EmitFPRecipEstimate64(EmitContext& ctx, IR::Inst* inst) {
     EmitFPRecipEstimate<u64>(code, ctx, inst);
 }
 
-template<typename FPT>
+template<size_t fsize>
 static void EmitFPRecipStepFused(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
+    using FPT = mp::unsigned_integer_of_size<fsize>;
+
+    if (code.DoesCpuSupport(Xbyak::util::Cpu::tFMA)) {
+        FPThreeOpWithCustomNaNHandler<fsize>(code, ctx, inst, [&](Xbyak::Xmm result, Xbyak::Xmm operand2) {
+            // result <- result * operand2 + 2.0
+            FCODE(vfnmadd213s)(result, operand2, code.MConst(xword, FP::FPValue<FPT, false, 0, 2>()));
+        }, [](FPT b, FPT c) -> FPT {
+            if ((FP::IsInf(b) && FP::IsZero(c)) || (FP::IsZero(b) && FP::IsInf(c))) {
+                return FP::FPValue<FPT, false, 0, 2>();
+            }
+            return *FP::ProcessNaNs(b, c);
+        });
+        return;
+    }
+
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.reg_alloc.HostCall(inst, args[0], args[1]);
     code.mov(code.ABI_PARAM3.cvt32(), ctx.FPCR());
@@ -715,11 +746,11 @@ static void EmitFPRecipStepFused(BlockOfCode& code, EmitContext& ctx, IR::Inst* 
 }
 
 void EmitX64::EmitFPRecipStepFused32(EmitContext& ctx, IR::Inst* inst) {
-    EmitFPRecipStepFused<u32>(code, ctx, inst);
+    EmitFPRecipStepFused<32>(code, ctx, inst);
 }
 
 void EmitX64::EmitFPRecipStepFused64(EmitContext& ctx, IR::Inst* inst) {
-    EmitFPRecipStepFused<u64>(code, ctx, inst);
+    EmitFPRecipStepFused<64>(code, ctx, inst);
 }
 
 static void EmitFPRound(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, size_t fsize) {
