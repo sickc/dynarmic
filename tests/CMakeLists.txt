@@ -39,6 +39,7 @@ add_executable(dynarmic_tests
 
 if (DYNARMIC_TESTS_USE_UNICORN)
     target_sources(dynarmic_tests PRIVATE
+        A32/fuzz_with_unicorn.cpp
         A64/fuzz_with_unicorn.cpp
         A64/verify_unicorn.cpp
         fuzz_util.cpp
