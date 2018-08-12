@@ -16,7 +16,6 @@
 #include "common/fp/fpsr.h"
 #include "common/llvm_disassemble.h"
 #include "common/scope_exit.h"
-#include "frontend/A64/decoder/a64.h"
 #include "frontend/A64/location_descriptor.h"
 #include "frontend/A64/translate/translate.h"
 #include "frontend/ir/basic_block.h"

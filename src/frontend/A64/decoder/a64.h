@@ -11,8 +11,6 @@
 #include <set>
 #include <vector>
 
-#include <boost/optional.hpp>
-
 #include "common/bit_util.h"
 #include "common/common_types.h"
 #include "frontend/decoder/decoder_detail.h"
@@ -20,10 +18,18 @@
 
 namespace Dynarmic::A64 {
 
-template <typename Visitor>
+namespace detail {
+
+constexpr size_t ToFastLookupIndex(u32 instruction) {
+    return ((instruction >> 10) & 0x00F) | ((instruction >> 18) & 0xFF0);
+}
+
+} // namespace detail
+
+template<typename Visitor>
 using Matcher = Decoder::Matcher<Visitor, u32>;
 
-template <typename Visitor>
+template<typename Visitor>
 std::vector<Matcher<Visitor>> GetDecodeTable() {
     std::vector<Matcher<Visitor>> table = {
 #define INST(fn, name, bitstring) Decoder::detail::detail<Matcher<Visitor>>::GetMatcher(&Visitor::fn, name, bitstring),
@@ -51,13 +57,35 @@ std::vector<Matcher<Visitor>> GetDecodeTable() {
 }
 
 template<typename Visitor>
-boost::optional<const Matcher<Visitor>&> Decode(u32 instruction) {
+std::array<std::vector<Matcher<Visitor>>, 0x1000> GetFastDecodeTable() {
     static const auto table = GetDecodeTable<Visitor>();
+
+    std::array<std::vector<Matcher<Visitor>>, 0x1000> fast_table{};
+    fast_table.fill({});
+
+    for (const auto& matcher : table) {
+        const size_t mask = detail::ToFastLookupIndex(matcher.GetMask());
+        const size_t expected = detail::ToFastLookupIndex(matcher.GetExpected());
+
+        for (size_t i = 0; i < fast_table.size(); i++) {
+            if ((i & mask) == expected) {
+                fast_table[i].emplace_back(matcher);
+            }
+        }
+    }
+
+    return fast_table;
+}
+
+template<typename Visitor>
+const Matcher<Visitor>* Decode(u32 instruction) {
+    static const auto fast_table = GetFastDecodeTable<Visitor>();
 
     const auto matches_instruction = [instruction](const auto& matcher) { return matcher.Matches(instruction); };
 
-    auto iter = std::find_if(table.begin(), table.end(), matches_instruction);
-    return iter != table.end() ? boost::optional<const Matcher<Visitor>&>(*iter) : boost::none;
+    const auto& sub_table = fast_table[detail::ToFastLookupIndex(instruction)];
+    const auto iter = std::find_if(sub_table.begin(), sub_table.end(), matches_instruction);
+    return iter != sub_table.end() ? &*iter : nullptr;
 }
 
 } // namespace Dynarmic::A64
