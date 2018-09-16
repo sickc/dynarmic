@@ -3,9 +3,14 @@
     .global _rsqrt5
     .global _rsqrt7
     .global _rsqrt9
+    .global rsqrt3
+    .global rsqrt5
+    .global rsqrt7
+    .global rsqrt9
 
     .text
 _rsqrt3:
+rsqrt3:
     movd %edi, %xmm0
     sqrtss %xmm0, %xmm0
 
@@ -18,6 +23,7 @@ _rsqrt3:
     ret
 
 _rsqrt5:
+rsqrt5:
     movd %edi, %xmm0
 
     psrld $23, %xmm0
@@ -46,6 +52,7 @@ _rsqrt5:
     ret
 
 _rsqrt7:
+rsqrt7:
     mov $0x3f80001, %eax
     shl $32, %rax
     mov %edi, %edi
@@ -76,6 +83,7 @@ _rsqrt7:
     ret
 
 _rsqrt9:
+rsqrt9:
     movd %edi, %xmm0
 
     movaps %xmm0, %xmm2
