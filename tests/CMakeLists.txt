@@ -1,4 +1,4 @@
-enable_language(ASM-ATT)
+set_property(SOURCE asm.s PROPERTY LANGUAGE CXX)
 
 add_executable(dynarmic_tests
     A32/fuzz_arm.cpp
@@ -41,6 +41,8 @@ add_executable(dynarmic_tests
     rsqrte.cpp
     asm.s
 )
+
+set_property(SOURCE asm.s PROPERTY LANGUAGE CXX)
 
 if (DYNARMIC_TESTS_USE_UNICORN)
     target_sources(dynarmic_tests PRIVATE
