@@ -14,7 +14,7 @@ option(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT "Enables support for systems that requ
 option(DYNARMIC_TESTS "Build tests" ${MASTER_PROJECT})
 option(DYNARMIC_TESTS_USE_UNICORN "Enable fuzzing tests against unicorn" OFF)
 option(DYNARMIC_USE_LLVM "Support disassembly of jitted x86_64 code using LLVM" OFF)
-option(DYNARMIC_WARNINGS_AS_ERRORS "Warnings as errors" ${MASTER_PROJECT})
+option(DYNARMIC_WARNINGS_AS_ERRORS "Warnings as errors" OFF)
 
 # Default to a Release build
 if (NOT CMAKE_BUILD_TYPE)

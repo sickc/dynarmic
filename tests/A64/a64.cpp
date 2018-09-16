@@ -536,3 +536,23 @@ TEST_CASE("A64: SQDMULH.4S (saturate)", "[a64]") {
     REQUIRE(jit.GetVector(0) == Vector{0x7ffffffe7fffffff, 0x8000000180000001});
     REQUIRE(FP::FPSR{jit.GetFpsr()}.QC() == true);
 }
+
+TEST_CASE("A64: FRSQRTE.4S", "[a64]") {
+    A64TestEnv env;
+    Dynarmic::A64::Jit jit{Dynarmic::A64::UserConfig{&env}};
+
+    env.code_mem.emplace_back(0x6ea1dab2); // frsqrte.4s    v18, v21
+    env.code_mem.emplace_back(0x14000000); // B .
+
+    // Make sure that saturating values are tested
+
+    jit.SetPC(0);
+    jit.SetVector(21, {0x27178b6731aa1ffe, 0x5cd713dc1f8b0a80});
+    jit.SetFpcr(0x04c00000);
+
+    env.ticks_left = 2;
+    jit.Run();
+
+    REQUIRE(jit.GetVector(18) == Vector{0x4ba68000465e0000, 0x30c580004f750000});
+}
+

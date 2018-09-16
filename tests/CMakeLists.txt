@@ -1,3 +1,5 @@
+enable_language(ASM-ATT)
+
 add_executable(dynarmic_tests
     A32/fuzz_arm.cpp
     A32/fuzz_thumb.cpp
@@ -35,6 +37,9 @@ add_executable(dynarmic_tests
     main.cpp
     mp.cpp
     rand_int.h
+
+    rsqrte.cpp
+    rsqrte_asm.s
 )
 
 if (DYNARMIC_TESTS_USE_UNICORN)
