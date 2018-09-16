@@ -39,7 +39,7 @@ add_executable(dynarmic_tests
     rand_int.h
 
     rsqrte.cpp
-    rsqrte_asm.s
+    asm.s
 )
 
 if (DYNARMIC_TESTS_USE_UNICORN)
