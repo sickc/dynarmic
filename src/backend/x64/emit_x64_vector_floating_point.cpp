@@ -158,19 +158,17 @@ Xbyak::Address GetVectorOf(BlockOfCode& code) {
 }
 
 template<size_t fsize>
-void ForceToDefaultNaN(BlockOfCode& code, EmitContext& ctx, Xbyak::Xmm result) {
-    if (ctx.FPSCR_DN()) {
-        const Xbyak::Xmm nan_mask = xmm0;
-        if (code.DoesCpuSupport(Xbyak::util::Cpu::tAVX)) {
-            FCODE(vcmpunordp)(nan_mask, result, result);
-            FCODE(blendvp)(result, GetNaNVector<fsize>(code));
-        } else {
-            code.movaps(nan_mask, result);
-            FCODE(cmpordp)(nan_mask, nan_mask);
-            code.andps(result, nan_mask);
-            code.andnps(nan_mask, GetNaNVector<fsize>(code));
-            code.orps(result, nan_mask);
-        }
+void ForceToDefaultNaN(BlockOfCode& code, Xbyak::Xmm result) {
+    const Xbyak::Xmm nan_mask = xmm0;
+    if (code.DoesCpuSupport(Xbyak::util::Cpu::tAVX)) {
+        FCODE(vcmpunordp)(nan_mask, result, result);
+        FCODE(blendvp)(result, GetNaNVector<fsize>(code));
+    } else {
+        code.movaps(nan_mask, result);
+        FCODE(cmpordp)(nan_mask, nan_mask);
+        code.andps(result, nan_mask);
+        code.andnps(nan_mask, GetNaNVector<fsize>(code));
+        code.orps(result, nan_mask);
     }
 }
 
@@ -262,7 +260,7 @@ void EmitTwoOpVectorOperation(BlockOfCode& code, EmitContext& ctx, IR::Inst* ins
             fn(result, xmm_a);
         }
 
-        ForceToDefaultNaN<fsize>(code, ctx, result);
+        ForceToDefaultNaN<fsize>(code, result);
 
         ctx.reg_alloc.DefineValue(inst, result);
         return;
@@ -308,7 +306,7 @@ void EmitThreeOpVectorOperation(BlockOfCode& code, EmitContext& ctx, IR::Inst* i
             fn(xmm_a, xmm_b);
         }
 
-        ForceToDefaultNaN<fsize>(code, ctx, xmm_a);
+        ForceToDefaultNaN<fsize>(code, xmm_a);
 
         ctx.reg_alloc.DefineValue(inst, xmm_a);
         return;
