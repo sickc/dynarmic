@@ -3,10 +3,12 @@
     .global _rsqrt5
     .global _rsqrt7
     .global _rsqrt9
+    .global _rsqrtv
     .global rsqrt3
     .global rsqrt5
     .global rsqrt7
     .global rsqrt9
+    .global rsqrtv
 
     .text
 _rsqrt3:
@@ -116,4 +118,55 @@ rsqrt9:
     paddd %xmm1, %xmm0
 
     movd %xmm0, %eax
+    ret
+
+.intel_syntax
+
+_rsqrtv:
+rsqrtv:
+
+    mov eax, 0xffff8000
+    movd xmm10, eax
+    mov eax, 0x00008000
+    movd xmm11, eax
+    mov eax, 0x00800000
+    movd xmm12, eax
+    mov eax, 0x60000000
+    movd xmm13, eax
+    mov eax, 0x3c000000
+    movd xmm14, eax
+    mov eax, 0x000047ff
+    movd xmm15, eax
+
+    movd xmm9, edi
+
+    vpand xmm0, xmm9, xmm10
+    vpor xmm0, xmm0, xmm11
+
+    # detect NaNs, negatives, zeros, denormals and infinities
+    vcmpngt_uqss xmm1, xmm0, xmm12
+    vptest xmm1, xmm1
+    jnz bad
+
+    # calculate x64 estimate
+    vrsqrtps xmm0, xmm0
+
+    # calculate correction factor
+    vpslld xmm1, xmm9, 8
+    vpsrad xmm2, xmm1, 31
+    vpaddd xmm1, xmm1, xmm13
+    vpcmpgtd xmm1, xmm1, xmm14
+    vpxor xmm1, xmm1, xmm2
+    vmovaps xmm2, xmm15
+    vpsubd xmm2, xmm2, xmm1
+
+    # correct x64 estimate
+    vpaddd xmm0, xmm0, xmm2
+    vpand xmm0, xmm0, xmm10
+
+    movd eax, xmm0
+    ret
+
+bad:
+    mov eax, 0xbdbdbdbd
     ret

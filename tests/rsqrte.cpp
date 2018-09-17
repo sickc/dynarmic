@@ -12,6 +12,7 @@ extern "C" u32 rsqrt3(u32);
 extern "C" u32 rsqrt5(u32);
 extern "C" u32 rsqrt7(u32);
 extern "C" u32 rsqrt9(u32);
+extern "C" u32 rsqrtv(u32);
 
 static u32 aarch64(u32 i)  {
     u64 a = i;
@@ -55,7 +56,8 @@ TEST_CASE("A64: RSQRTE_TEST", "[a64]") {
         u32 result3 = (rsqrt5((u32(i) << 23) | 0x007FFFFF) >> 24);
         u32 result4 = (rsqrt7(x) >> 15) & 0xFF;
         u32 result5 = (rsqrt9(x) >> 15) & 0xFF;
+        u32 resultv = (rsqrtv(x) >> 15) & 0xFF;
 
-        printf("%03x %08x %08x %08x %08x %06x %06x %06x %06x %02x %02x %03x %02x %02x %s %s %s %s\n", i, x, rsqrt5(u32(i) << 22), rsqrt7(x), rsqrt3(x), (rsqrt3(x) << 1) & 0xFFFFFF, (rsqrt3(x) + (0x6000 >> 1)) & 0xFFFFFF, (rsqrt7(x) << 1) & 0xFFFFFF, (rsqrt9(x) << 1) & 0xFFFFFF, result1, result2, result3, result4, result5, result1 != result2 ? "*" : " ", result2 != result3 ? "?" : " ", result2 != result4 ? "." : " ", result5 != result2 ? "!" : " ");
+        printf("%03x %08x %08x %08x %08x %06x %06x %06x %06x %06x %02x %02x %03x %02x %02x %02x %s %s %s %s %s\n", i, x, rsqrt5(u32(i) << 22), rsqrt7(x), rsqrt3(x), (rsqrt3(x) << 1) & 0xFFFFFF, (rsqrt3(x) + (0x6000 >> 1)) & 0xFFFFFF, (rsqrt7(x) << 1) & 0xFFFFFF, (rsqrt9(x) << 1) & 0xFFFFFF, (rsqrtv(x) << 1) & 0xFFFFFF, result1, result2, result3, result4, result5, resultv, result1 != result2 ? "*" : " ", result2 != result3 ? "?" : " ", result2 != result4 ? "." : " ", result5 != result2 ? "!" : " ", resultv != result2 ? "v" : " ");
     }
 }
