@@ -168,19 +168,17 @@ Xbyak::Address GetVectorOf(BlockOfCode& code) {
 }
 
 template<size_t fsize>
-void ForceToDefaultNaN(BlockOfCode& code, EmitContext& ctx, Xbyak::Xmm result) {
-    if (ctx.FPSCR_DN()) {
-        const Xbyak::Xmm nan_mask = xmm0;
-        if (code.DoesCpuSupport(Xbyak::util::Cpu::tAVX)) {
-            FCODE(vcmpunordp)(nan_mask, result, result);
-            FCODE(blendvp)(result, GetNaNVector<fsize>(code));
-        } else {
-            code.movaps(nan_mask, result);
-            FCODE(cmpordp)(nan_mask, nan_mask);
-            code.andps(result, nan_mask);
-            code.andnps(nan_mask, GetNaNVector<fsize>(code));
-            code.orps(result, nan_mask);
-        }
+void ForceToDefaultNaN(BlockOfCode& code, Xbyak::Xmm result) {
+    const Xbyak::Xmm nan_mask = xmm0;
+    if (code.DoesCpuSupport(Xbyak::util::Cpu::tAVX)) {
+        FCODE(vcmpunordp)(nan_mask, result, result);
+        FCODE(blendvp)(result, GetNaNVector<fsize>(code));
+    } else {
+        code.movaps(nan_mask, result);
+        FCODE(cmpordp)(nan_mask, nan_mask);
+        code.andps(result, nan_mask);
+        code.andnps(nan_mask, GetNaNVector<fsize>(code));
+        code.orps(result, nan_mask);
     }
 }
 
@@ -285,7 +283,7 @@ void EmitTwoOpVectorOperation(BlockOfCode& code, EmitContext& ctx, IR::Inst* ins
             fn(result, xmm_a);
         }
 
-        ForceToDefaultNaN<fsize>(code, ctx, result);
+        ForceToDefaultNaN<fsize>(code, result);
 
         ctx.reg_alloc.DefineValue(inst, result);
         return;
@@ -331,7 +329,7 @@ void EmitThreeOpVectorOperation(BlockOfCode& code, EmitContext& ctx, IR::Inst* i
             fn(xmm_a, xmm_b);
         }
 
-        ForceToDefaultNaN<fsize>(code, ctx, xmm_a);
+        ForceToDefaultNaN<fsize>(code, xmm_a);
 
         ctx.reg_alloc.DefineValue(inst, xmm_a);
         return;
@@ -360,14 +358,8 @@ void EmitThreeOpVectorOperation(BlockOfCode& code, EmitContext& ctx, IR::Inst* i
 }
 
 template<typename Lambda>
-void EmitTwoOpFallback(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, Lambda lambda) {
+void EmitTwoOpFallbackWithoutRegAlloc(BlockOfCode& code, EmitContext& ctx, Xbyak::Xmm result, Xbyak::Xmm arg1, Lambda lambda) {
     const auto fn = static_cast<mp::equivalent_function_type_t<Lambda>*>(lambda);
-    
-    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
-    const Xbyak::Xmm arg1 = ctx.reg_alloc.UseXmm(args[0]);
-    const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm();
-    ctx.reg_alloc.EndOfAllocScope();
-    ctx.reg_alloc.HostCall(nullptr);
 
     constexpr u32 stack_space = 2 * 16;
     code.sub(rsp, stack_space + ABI_SHADOW_SPACE);
@@ -381,6 +373,17 @@ void EmitTwoOpFallback(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, Lamb
     code.movaps(result, xword[rsp + ABI_SHADOW_SPACE + 0 * 16]);
 
     code.add(rsp, stack_space + ABI_SHADOW_SPACE);
+}
+
+template<typename Lambda>
+void EmitTwoOpFallback(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, Lambda lambda) {
+    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    const Xbyak::Xmm arg1 = ctx.reg_alloc.UseXmm(args[0]);
+    const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm();
+    ctx.reg_alloc.EndOfAllocScope();
+    ctx.reg_alloc.HostCall(nullptr);
+
+    EmitTwoOpFallbackWithoutRegAlloc(code, ctx, result, arg1, lambda);
 
     ctx.reg_alloc.DefineValue(inst, result);
 }
@@ -1156,21 +1159,87 @@ void EmitX64::EmitFPVectorRoundInt64(EmitContext& ctx, IR::Inst* inst) {
     EmitFPVectorRoundInt<64>(code, ctx, inst);
 }
 
-template<typename FPT>
+template<size_t fsize>
 static void EmitRSqrtEstimate(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
-    EmitTwoOpFallback(code, ctx, inst, [](VectorArray<FPT>& result, const VectorArray<FPT>& operand, FP::FPCR fpcr, FP::FPSR& fpsr) {
+    using FPT = mp::unsigned_integer_of_size<fsize>;
+
+    const auto fallback_fn = [](VectorArray<FPT>& result, const VectorArray<FPT>& operand, FP::FPCR fpcr, FP::FPSR& fpsr) {
         for (size_t i = 0; i < result.size(); i++) {
             result[i] = FP::FPRSqrtEstimate<FPT>(operand[i], fpcr, fpsr);
         }
-    });
+    };
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4127) // C4127: conditional expression is constant
+#endif
+    if (fsize == 32 && code.DoesCpuSupport(Xbyak::util::Cpu::tAVX)) {
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+        auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+
+        const Xbyak::Xmm operand = ctx.reg_alloc.UseXmm(args[0]);
+        const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm();
+        const Xbyak::Xmm tmp1 = ctx.reg_alloc.ScratchXmm();
+        const Xbyak::Xmm tmp2 = ctx.reg_alloc.ScratchXmm();
+
+        Xbyak::Label end, fallback;
+
+        // pre-process input
+        code.vpand(result, operand, GetVectorOf<32, 0xffff8000>(code));
+        code.vpor(result, result, GetVectorOf<32, 0x00008000>(code));
+
+        // detect NaNs, negatives, zeros, denormals and infinities
+        code.vcmpngt_uqps(tmp1, result, GetVectorOf<32, 0x00800000>(code));
+        code.vptest(tmp1, tmp1);
+        code.jnz(fallback, code.T_NEAR);
+
+        // calculate x64 estimate
+        code.vrsqrtps(result, result);
+
+        // calculate correction factor
+        code.vpslld(tmp1, operand, 8);
+        code.vpsrad(tmp2, tmp1, 31);
+        code.vpaddd(tmp1, tmp1, GetVectorOf<32, 0x60000000>(code));
+        code.vpcmpgtd(tmp1, tmp1, GetVectorOf<32, 0x3c000000>(code));
+        code.vpxor(tmp1, tmp1, tmp2);
+        code.vmovaps(tmp2, GetVectorOf<32, 0x000047ff>(code));
+        code.vpsubd(tmp2, tmp2, tmp1);
+
+        // correct x64 estimate
+        code.vpaddd(result, result, tmp2);
+        code.vpand(result, result, GetVectorOf<32, 0xffff8000>(code));
+
+        ctx.reg_alloc.Release(tmp1);
+        ctx.reg_alloc.Release(tmp2);
+
+        code.L(end);
+
+        code.SwitchToFarCode();
+        code.L(fallback);
+        code.sub(rsp, 8);
+        ABI_PushCallerSaveRegistersAndAdjustStackExcept(code, HostLocXmmIdx(result.getIdx()));
+        EmitTwoOpFallbackWithoutRegAlloc(code, ctx, result, operand, fallback_fn);
+        ABI_PopCallerSaveRegistersAndAdjustStackExcept(code, HostLocXmmIdx(result.getIdx()));
+        code.add(rsp, 8);
+        code.jmp(end, code.T_NEAR);
+        code.SwitchToNearCode();
+
+        ctx.reg_alloc.DefineValue(inst, result);
+
+        return;
+    }
+
+    EmitTwoOpFallback(code, ctx, inst, fallback_fn);
 }
 
 void EmitX64::EmitFPVectorRSqrtEstimate32(EmitContext& ctx, IR::Inst* inst) {
-    EmitRSqrtEstimate<u32>(code, ctx, inst);
+    EmitRSqrtEstimate<32>(code, ctx, inst);
 }
 
 void EmitX64::EmitFPVectorRSqrtEstimate64(EmitContext& ctx, IR::Inst* inst) {
-    EmitRSqrtEstimate<u64>(code, ctx, inst);
+    EmitRSqrtEstimate<64>(code, ctx, inst);
 }
 
 template<size_t fsize>

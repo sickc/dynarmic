@@ -8,7 +8,10 @@
 
 #include <dynarmic/A64/exclusive_monitor.h>
 
+#include "common/fp/fpcr.h"
 #include "common/fp/fpsr.h"
+#include "common/fp/op/FPRSqrtEstimate.h"
+#include "rand_int.h"
 #include "testenv.h"
 
 namespace FP = Dynarmic::FP;
@@ -535,4 +538,31 @@ TEST_CASE("A64: SQDMULH.4S (saturate)", "[a64]") {
 
     REQUIRE(jit.GetVector(0) == Vector{0x7ffffffe7fffffff, 0x8000000180000001});
     REQUIRE(FP::FPSR{jit.GetFpsr()}.QC() == true);
+}
+
+TEST_CASE("A64: FRSQRTE.4S", "[a64]") {
+    A64TestEnv env;
+    Dynarmic::A64::Jit jit{Dynarmic::A64::UserConfig{&env}};
+
+    env.code_mem.emplace_back(0x6ea1d963); // FRSQRTE.4S V3, V11
+    env.code_mem.emplace_back(0x14000000); // B .
+
+    FP::FPCR fpcr;
+
+    for (size_t i = 0; i < 0xFFFFFFFF; i += 71) {
+        fpcr.RMode(static_cast<FP::RoundingMode>(RandInt(0, 3)));
+
+        jit.SetPC(0);
+        jit.SetVector(11, {i | 0x578a0000'00000000, 0x578a0000'578a0000});
+        jit.SetFpcr(fpcr.Value());
+        jit.SetFpsr(0);
+
+        env.ticks_left = 1;
+        jit.Run();
+
+        const u32 jit_answer = static_cast<u32>(jit.GetVector(3)[0]);
+
+        FP::FPSR fpsr;
+        REQUIRE(jit_answer == FP::FPRSqrtEstimate<u32>(static_cast<u32>(i), fpcr, fpsr));
+    }
 }
