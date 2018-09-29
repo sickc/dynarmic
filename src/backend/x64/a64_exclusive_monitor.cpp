@@ -4,62 +4,24 @@
  * General Public License version 2 or any later version.
  */
 
-#include <algorithm>
+#include <memory>
 
 #include <dynarmic/A64/exclusive_monitor.h>
+#include "backend/x64/a64_exclusive_monitor.h"
 #include "common/assert.h"
 
-namespace Dynarmic {
-namespace A64 {
+namespace Dynarmic::A64 {
 
-ExclusiveMonitor::ExclusiveMonitor(size_t processor_count) : exclusive_addresses(processor_count, INVALID_EXCLUSIVE_ADDRESS) {
-    Unlock();
-}
+ExclusiveMonitor::ExclusiveMonitor(size_t processor_count) : impl(std::make_unique<ExclusiveMonitor::Impl>(processor_count)) {}
+
+ExclusiveMonitor::~ExclusiveMonitor() = default;
 
 size_t ExclusiveMonitor::GetProcessorCount() const {
-    return exclusive_addresses.size();
+    return impl->GetProcessorCount();
 }
 
-void ExclusiveMonitor::Mark(size_t processor_id, VAddr address, size_t size) {
-    ASSERT(size <= 16);
-    const VAddr masked_address = address & RESERVATION_GRANULE_MASK;
-
-    Lock();
-    exclusive_addresses[processor_id] = masked_address;
-    Unlock();
+ExclusiveMonitor::Impl::Impl(size_t processor_count) : processor_count(processor_count) {
+    ASSERT(processor_count <= 12);
 }
 
-void ExclusiveMonitor::Lock() {
-    while (is_locked.test_and_set(std::memory_order_acquire)) {}
-}
-
-void ExclusiveMonitor::Unlock() {
-    is_locked.clear(std::memory_order_release);
-}
-
-bool ExclusiveMonitor::CheckAndClear(size_t processor_id, VAddr address, size_t size) {
-    ASSERT(size <= 16);
-    const VAddr masked_address = address & RESERVATION_GRANULE_MASK;
-
-    Lock();
-    if (exclusive_addresses[processor_id] != masked_address) {
-        Unlock();
-        return false;
-    }
-
-    for (VAddr& other_address : exclusive_addresses) {
-        if (other_address == masked_address) {
-            other_address = INVALID_EXCLUSIVE_ADDRESS;
-        }
-    }
-    return true;
-}
-
-void ExclusiveMonitor::Clear() {
-    Lock();
-    std::fill(exclusive_addresses.begin(), exclusive_addresses.end(), INVALID_EXCLUSIVE_ADDRESS);
-    Unlock();
-}
-
-} // namespace A64
-} // namespace Dynarmic
+} // namespace Dynarmic::A64

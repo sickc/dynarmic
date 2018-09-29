@@ -18,6 +18,7 @@ namespace Dynarmic {
 namespace A64 {
 
 struct Context;
+using VAddr = std::uint64_t;
 
 class Jit final {
 public:
@@ -102,6 +103,32 @@ public:
 
     /// Clears exclusive state for this core.
     void ClearExclusiveState();
+
+    /// Perform an 8-bit exclusive read using this core's state.
+    /// This may only be done if this core isn't running.
+    std::uint8_t ExclusiveReadMemory8(VAddr vaddr);
+    /// Perform a 16-bit exclusive read using this core's state.
+    /// This may only be done if this core isn't running.
+    std::uint16_t ExclusiveReadMemory16(VAddr vaddr);
+    /// Perform a 32-bit exclusive read using this core's state.
+    /// This may only be done if this core isn't running.
+    std::uint32_t ExclusiveReadMemory32(VAddr vaddr);
+    /// Perform a 64-bit exclusive read using this core's state.
+    /// This may only be done if this core isn't running.
+    std::uint64_t ExclusiveReadMemory64(VAddr vaddr);
+
+    /// Perform an 8-bit exclusive write using this core's state.
+    /// This may only be done if this core isn't running.
+    bool ExclusiveWriteMemory8(VAddr vaddr, std::uint8_t value);
+    /// Perform a 16-bit exclusive write using this core's state.
+    /// This may only be done if this core isn't running.
+    bool ExclusiveWriteMemory16(VAddr vaddr, std::uint16_t value);
+    /// Perform a 32-bit exclusive write using this core's state.
+    /// This may only be done if this core isn't running.
+    bool ExclusiveWriteMemory32(VAddr vaddr, std::uint32_t value);
+    /// Perform a 64-bit exclusive write using this core's state.
+    /// This may only be done if this core isn't running.
+    bool ExclusiveWriteMemory64(VAddr vaddr, std::uint64_t value);
 
     /**
      * Returns true if Jit::Run was called but hasn't returned yet.

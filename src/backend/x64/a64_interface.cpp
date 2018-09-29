@@ -171,6 +171,46 @@ public:
         jit_state.exclusive_state = 0;
     }
 
+    u8 ExclusiveReadMemory8(VAddr vaddr) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    u16 ExclusiveReadMemory16(VAddr vaddr) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    u32 ExclusiveReadMemory32(VAddr vaddr) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    u64 ExclusiveReadMemory64(VAddr vaddr) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    bool ExclusiveWriteMemory8(VAddr vaddr, u8 value) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    bool ExclusiveWriteMemory16(VAddr vaddr, u16 value) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    bool ExclusiveWriteMemory32(VAddr vaddr, u32 value) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
+    bool ExclusiveWriteMemory64(VAddr vaddr, u64 value) {
+        UNIMPLEMENTED();
+        return 0;
+    }
+
     bool IsExecuting() const {
         return is_executing;
     }
@@ -346,6 +386,38 @@ void Jit::SetPstate(u32 value) {
 
 void Jit::ClearExclusiveState() {
     impl->ClearExclusiveState();
+}
+
+u8 Jit::ExclusiveReadMemory8(VAddr vaddr) {
+    return impl->ExclusiveReadMemory8(vaddr);
+}
+
+u16 Jit::ExclusiveReadMemory16(VAddr vaddr) {
+    return impl->ExclusiveReadMemory16(vaddr);
+}
+
+u32 Jit::ExclusiveReadMemory32(VAddr vaddr) {
+    return impl->ExclusiveReadMemory32(vaddr);
+}
+
+u64 Jit::ExclusiveReadMemory64(VAddr vaddr) {
+    return impl->ExclusiveReadMemory64(vaddr);
+}
+
+bool Jit::ExclusiveWriteMemory8(VAddr vaddr, u8 value) {
+    return impl->ExclusiveWriteMemory8(vaddr, value);
+}
+
+bool Jit::ExclusiveWriteMemory16(VAddr vaddr, u16 value) {
+    return impl->ExclusiveWriteMemory16(vaddr, value);
+}
+
+bool Jit::ExclusiveWriteMemory32(VAddr vaddr, u32 value) {
+    return impl->ExclusiveWriteMemory32(vaddr, value);
+}
+
+bool Jit::ExclusiveWriteMemory64(VAddr vaddr, u64 value) {
+    return impl->ExclusiveWriteMemory64(vaddr, value);
 }
 
 bool Jit::IsExecuting() const {

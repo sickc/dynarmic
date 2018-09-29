@@ -11,6 +11,7 @@
 #include <fmt/ostream.h>
 
 #include "backend/x64/a64_emit_x64.h"
+#include "backend/x64/a64_exclusive_monitor.h"
 #include "backend/x64/a64_jitstate.h"
 #include "backend/x64/abi.h"
 #include "backend/x64/block_of_code.h"
@@ -685,15 +686,46 @@ void A64EmitX64::EmitA64ClearExclusive(A64EmitContext&, IR::Inst*) {
 void A64EmitX64::EmitA64SetExclusive(A64EmitContext& ctx, IR::Inst* inst) {
     if (conf.global_monitor) {
         auto args = ctx.reg_alloc.GetArgumentInfo(inst);
-        ctx.reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
 
-        code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(1));
-        code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(&conf));
-        code.CallFunction(static_cast<void(*)(A64::UserConfig&, u64, u8)>(
-            [](A64::UserConfig& conf, u64 vaddr, u8 size) {
-                conf.global_monitor->Mark(conf.processor_id, vaddr, size);
-            }
-        ));
+        ASSERT(args[1].IsImmediate());
+        ASSERT(conf.processor_id < conf.global_monitor->GetProcessorCount());
+
+        ctx.reg_alloc.ScratchGpr({HostLoc::RAX});
+        const Xbyak::Reg64 address = ctx.reg_alloc.UseScratchGpr(args[0]);
+        const Xbyak::Reg64 stateptr = ctx.reg_alloc.ScratchGpr();
+        const Xbyak::Reg64 tmp = ctx.reg_alloc.ScratchGpr();
+
+        Xbyak::Label abort, write;
+
+        code.mov(stateptr, reinterpret_cast<u64>(&conf.global_monitor->impl->state));
+        code.shl(address, 8);
+        code.and_(address, 0xFFFFC000);
+        code.or_(address, 1 << conf.processor_id);
+        code.mov(rax, code.qword[stateptr]);
+
+        // Is anything marked yet?
+        code.test(rax, rax);
+        code.jz(write);
+
+        // If locked, abort!
+        code.bt(rax, 13);
+        code.jc(abort);
+
+        // If current address != currently marked address, overwrite.
+        code.mov(tmp, rax);
+        code.xor_(tmp, address);
+        code.test(tmp, 0xFFFFE000);
+        code.jne(write);
+
+        // Add my own processor bit to all the others.
+        code.or_(address, rax);
+
+        code.L(write);
+        code.lock();
+        code.cmpxchg(code.qword[stateptr], address);
+        code.setz(code.byte[r15 + offsetof(A64JitState, exclusive_state)]);
+
+        code.L(abort);
 
         return;
     }
@@ -952,75 +984,51 @@ void A64EmitX64::EmitExclusiveWrite(A64EmitContext& ctx, IR::Inst* inst, size_t 
     if (conf.global_monitor) {
         auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
-        if (bitsize != 128) {
-            ctx.reg_alloc.HostCall(inst, {}, args[0], args[1]);
+        ctx.reg_alloc.ScratchGpr({HostLoc::RAX});
+        const Xbyak::Reg64 vaddr = ctx.reg_alloc.UseGpr(args[0]);
+        Xbyak::Reg64 value;
+        Xbyak::Xmm value128;
+        if (bitsize == 128) {
+            value128 = ctx.reg_alloc.UseXmm(args[1]);
         } else {
-            ctx.reg_alloc.Use(args[0], ABI_PARAM2);
-            ctx.reg_alloc.Use(args[1], HostLoc::XMM1);
-            ctx.reg_alloc.EndOfAllocScope();
-            ctx.reg_alloc.HostCall(inst);
+            value = ctx.reg_alloc.UseGpr(args[1]);
         }
 
-        Xbyak::Label end;
+        const Xbyak::Reg32 result = ctx.reg_alloc.ScratchGpr().cvt32();
+        const Xbyak::Reg64 stateptr = ctx.reg_alloc.ScratchGpr();
+        const Xbyak::Reg64 tmpaddr = ctx.reg_alloc.ScratchGpr();
 
-        code.mov(code.ABI_RETURN, u32(1));
+        Xbyak::Label abort;
+
+        code.mov(result, 1);
         code.cmp(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
-        code.je(end);
-        code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(&conf));
-        switch (bitsize) {
-        case 8:
-            code.CallFunction(static_cast<u32(*)(A64::UserConfig&, u64, u8)>(
-                [](A64::UserConfig& conf, u64 vaddr, u8 value) -> u32 {
-                    return conf.global_monitor->DoExclusiveOperation(conf.processor_id, vaddr, 1, [&]{
-                        conf.callbacks->MemoryWrite8(vaddr, value);
-                    }) ? 0 : 1;
-                }
-            ));
-            break;
-        case 16:
-            code.CallFunction(static_cast<u32(*)(A64::UserConfig&, u64, u16)>(
-                [](A64::UserConfig& conf, u64 vaddr, u16 value) -> u32 {
-                    return conf.global_monitor->DoExclusiveOperation(conf.processor_id, vaddr, 2, [&]{
-                        conf.callbacks->MemoryWrite16(vaddr, value);
-                    }) ? 0 : 1;
-                }
-            ));
-            break;
-        case 32:
-            code.CallFunction(static_cast<u32(*)(A64::UserConfig&, u64, u32)>(
-                [](A64::UserConfig& conf, u64 vaddr, u32 value) -> u32 {
-                    return conf.global_monitor->DoExclusiveOperation(conf.processor_id, vaddr, 4, [&]{
-                        conf.callbacks->MemoryWrite32(vaddr, value);
-                    }) ? 0 : 1;
-                }
-            ));
-            break;
-        case 64:
-            code.CallFunction(static_cast<u32(*)(A64::UserConfig&, u64, u64)>(
-                [](A64::UserConfig& conf, u64 vaddr, u64 value) -> u32 {
-                    return conf.global_monitor->DoExclusiveOperation(conf.processor_id, vaddr, 8, [&]{
-                        conf.callbacks->MemoryWrite64(vaddr, value);
-                    }) ? 0 : 1;
-                }
-            ));
-            break;
-        case 128:
-            code.sub(rsp, 16 + ABI_SHADOW_SPACE);
-            code.lea(code.ABI_PARAM3, ptr[rsp + ABI_SHADOW_SPACE]);
-            code.movaps(xword[code.ABI_PARAM3], xmm1);
-            code.CallFunction(static_cast<u32(*)(A64::UserConfig&, u64, A64::Vector&)>(
-                [](A64::UserConfig& conf, u64 vaddr, A64::Vector& value) -> u32 {
-                    return conf.global_monitor->DoExclusiveOperation(conf.processor_id, vaddr, 16, [&]{
-                        conf.callbacks->MemoryWrite128(vaddr, value);
-                    }) ? 0 : 1;
-                }
-            ));
-            code.add(rsp, 16 + ABI_SHADOW_SPACE);
-            break;
-        default:
-            UNREACHABLE();
-        }
-        code.L(end);
+        code.je(abort, code.T_NEAR);
+
+        code.mov(stateptr, reinterpret_cast<u64>(&conf.global_monitor->impl->state));
+        code.mov(tmpaddr, vaddr);
+        code.shl(tmpaddr, 8);
+        code.and_(tmpaddr, 0xFFFFC000);
+        code.or_(tmpaddr, 1 << conf.processor_id);
+        code.mov(rax, code.qword[stateptr]);
+
+        // If current address != currently marked address, abort.
+        code.xor_(tmpaddr, rax);
+        code.test(tmpaddr, 0xFFFFE000 | (1 << conf.processor_id));
+        code.jne(abort);
+
+        // Attempt to lock exclusive state.
+        code.mov(tmpaddr, rax);
+        code.bts(tmpaddr, 13);
+        code.lock();
+        code.cmpxchg(code.qword[stateptr], tmpaddr);
+        code.jnz(abort);
+
+
+
+        code.mov(code.qword[stateptr], 0);
+        code.mfence(); // TODO: Remove(?)
+
+        code.L(abort);
 
         return;
     }
