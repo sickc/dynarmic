@@ -113,7 +113,6 @@ add_library(dynarmic
     frontend/A32/types.h
     frontend/A64/decoder/a64.h
     frontend/A64/decoder/a64.inc
-    frontend/A64/imm.h
     frontend/A64/ir_emitter.cpp
     frontend/A64/ir_emitter.h
     frontend/A64/location_descriptor.cpp
@@ -179,6 +178,7 @@ add_library(dynarmic
     frontend/A64/types.h
     frontend/decoder/decoder_detail.h
     frontend/decoder/matcher.h
+    frontend/imm.h
     frontend/ir/basic_block.cpp
     frontend/ir/basic_block.h
     frontend/ir/cond.h
