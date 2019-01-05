@@ -168,20 +168,25 @@ Xbyak::Address GetVectorOf(BlockOfCode& code) {
 }
 
 template<size_t fsize>
-void ForceToDefaultNaN(BlockOfCode& code, EmitContext& ctx, Xbyak::Xmm result) {
+void ForceTo(BlockOfCode& code, EmitContext& ctx, Xbyak::Xmm result, Xbyak::Address value) {
     if (ctx.FPSCR_DN()) {
         const Xbyak::Xmm nan_mask = xmm0;
         if (code.DoesCpuSupport(Xbyak::util::Cpu::tAVX)) {
             FCODE(vcmpunordp)(nan_mask, result, result);
-            FCODE(blendvp)(result, GetNaNVector<fsize>(code));
+            FCODE(blendvp)(result, value);
         } else {
             code.movaps(nan_mask, result);
             FCODE(cmpordp)(nan_mask, nan_mask);
             code.andps(result, nan_mask);
-            code.andnps(nan_mask, GetNaNVector<fsize>(code));
+            code.andnps(nan_mask, value);
             code.orps(result, nan_mask);
         }
     }
+}
+
+template<size_t fsize>
+void ForceToDefaultNaN(BlockOfCode& code, EmitContext& ctx, Xbyak::Xmm result) {
+    ForceTo<fsize>(code, ctx, result, GetNaNVector<fsize>(code));
 }
 
 template<size_t fsize>
