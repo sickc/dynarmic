@@ -233,13 +233,11 @@ void A32EmitX64::GenTerminalHandlers() {
     // PC ends up in ebp, location_descriptor ends up in rbx
     const auto calculate_location_descriptor = [this] {
         // This calculation has to match up with IREmitter::PushRSB
-        // TODO: Optimization is available here based on known state of FPSCR_mode and CPSR_et.
+        // TODO: Optimization is available here based on known state of FPSCR_mode, PSTATE_it and CPSR_et.
         code.mov(ecx, MJitStateReg(A32::Reg::PC));
         code.mov(ebp, ecx);
         code.shl(rcx, 32);
-        code.mov(ebx, dword[r15 + offsetof(A32JitState, FPSCR_mode)]);
-        code.or_(ebx, dword[r15 + offsetof(A32JitState, CPSR_et)]);
-        code.or_(rbx, rcx);
+        code.or_(rcx, dword[r15 + offsetof(A32JitState, CPSR_et)]);
     };
 
     Xbyak::Label fast_dispatch_cache_miss, rsb_cache_miss;
@@ -414,7 +412,7 @@ void A32EmitX64::EmitA32SetCpsr(A32EmitContext& ctx, IR::Inst* inst) {
         // CPSR_et
         code.mov(tmp, cpsr);
         code.and_(tmp, 3);
-        code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], tmp);
+        code.mov(code.byte[r15 + offsetof(A32JitState, CPSR_et)], tmp);
         // CPSR_ge: Distribute GE bits to each byte then perform SWAR negation
         code.shr(cpsr, 2);
         code.mov(tmp2, 0x01010101);
@@ -653,7 +651,7 @@ void A32EmitX64::EmitA32BXWritePC(A32EmitContext& ctx, IR::Inst* inst) {
         et |= Common::Bit<0>(new_pc) ? 1 : 0;
 
         code.mov(MJitStateReg(A32::Reg::PC), new_pc & mask);
-        code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], et);
+        code.mov(code.byte[r15 + offsetof(A32JitState, CPSR_et)], et);
     } else {
         if (ctx.Location().EFlag()) {
             Xbyak::Reg32 new_pc = ctx.reg_alloc.UseScratchGpr(arg).cvt32();
@@ -663,7 +661,7 @@ void A32EmitX64::EmitA32BXWritePC(A32EmitContext& ctx, IR::Inst* inst) {
             code.mov(mask, new_pc);
             code.and_(mask, 1);
             code.lea(et, ptr[mask.cvt64() + 2]);
-            code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], et);
+            code.mov(code.byte[r15 + offsetof(A32JitState, CPSR_et)], et);
             code.lea(mask, ptr[mask.cvt64() + mask.cvt64() * 1 - 4]); // mask = pc & 1 ? 0xFFFFFFFE : 0xFFFFFFFC
             code.and_(new_pc, mask);
             code.mov(MJitStateReg(A32::Reg::PC), new_pc);
@@ -673,7 +671,7 @@ void A32EmitX64::EmitA32BXWritePC(A32EmitContext& ctx, IR::Inst* inst) {
 
             code.mov(mask, new_pc);
             code.and_(mask, 1);
-            code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], mask);
+            code.mov(code.byte[r15 + offsetof(A32JitState, CPSR_et)], mask);
             code.lea(mask, ptr[mask.cvt64() + mask.cvt64() * 1 - 4]); // mask = pc & 1 ? 0xFFFFFFFE : 0xFFFFFFFC
             code.and_(new_pc, mask);
             code.mov(MJitStateReg(A32::Reg::PC), new_pc);
@@ -1261,7 +1259,7 @@ static u32 CalculateCpsr_et(const IR::LocationDescriptor& arg) {
 
 void A32EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDescriptor initial_location) {
     if (CalculateCpsr_et(terminal.next) != CalculateCpsr_et(initial_location)) {
-        code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], CalculateCpsr_et(terminal.next));
+        code.mov(code.byte[r15 + offsetof(A32JitState, CPSR_et)], CalculateCpsr_et(terminal.next));
     }
 
     code.cmp(qword[r15 + offsetof(A32JitState, cycles_remaining)], 0);
@@ -1286,7 +1284,7 @@ void A32EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDesc
 
 void A32EmitX64::EmitTerminalImpl(IR::Term::LinkBlockFast terminal, IR::LocationDescriptor initial_location) {
     if (CalculateCpsr_et(terminal.next) != CalculateCpsr_et(initial_location)) {
-        code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], CalculateCpsr_et(terminal.next));
+        code.mov(code.byte[r15 + offsetof(A32JitState, CPSR_et)], CalculateCpsr_et(terminal.next));
     }
 
     patch_information[terminal.next].jmp.emplace_back(code.getCurr());

@@ -114,7 +114,7 @@ private:
 
         u32 pc = jit_state.Reg[15];
         A32::PSR cpsr{jit_state.Cpsr()};
-        A32::FPSCR fpscr{jit_state.FPSCR_mode};
+        A32::FPSCR fpscr{static_cast<u32>(jit_state.FPSCR_mode) << 16};
         A32::LocationDescriptor descriptor{pc, cpsr, fpscr};
 
         return this_.GetBasicBlock(descriptor).entrypoint;

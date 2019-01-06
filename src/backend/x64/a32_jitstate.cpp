@@ -158,7 +158,7 @@ u32 A32JitState::Fpscr() const {
     ASSERT((FPSCR_IDC & ~(1 << 7)) == 0);
     ASSERT((FPSCR_UFC & ~(1 << 3)) == 0);
 
-    u32 FPSCR = FPSCR_mode | FPSCR_nzcv;
+    u32 FPSCR = (static_cast<u32>(FPSCR_mode) << 16) | FPSCR_nzcv;
     FPSCR |= (guest_MXCSR & 0b0000000000001);       // IOC = IE
     FPSCR |= (guest_MXCSR & 0b0000000111100) >> 1;  // IXC, UFC, OFC, DZC = PE, UE, OE, ZE
     FPSCR |= FPSCR_IDC;
@@ -170,7 +170,7 @@ u32 A32JitState::Fpscr() const {
 
 void A32JitState::SetFpscr(u32 FPSCR) {
     old_FPSCR = FPSCR;
-    FPSCR_mode = FPSCR & FPSCR_MODE_MASK;
+    FPSCR_mode = (FPSCR & FPSCR_MODE_MASK) >> 16;
     FPSCR_nzcv = FPSCR & FPSCR_NZCV_MASK;
     guest_MXCSR = 0;
 
@@ -194,10 +194,6 @@ void A32JitState::SetFpscr(u32 FPSCR) {
         //guest_MXCSR |= (1 << 15); // SSE Flush to Zero
         //guest_MXCSR |= (1 << 6);  // SSE Denormals are Zero
     }
-}
-
-u64 A32JitState::GetUniqueHash() const {
-    return CPSR_et | FPSCR_mode | (static_cast<u64>(Reg[15]) << 32);
 }
 
 } // namespace Dynarmic::BackendX64

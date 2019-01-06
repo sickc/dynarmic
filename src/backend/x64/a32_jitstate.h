@@ -29,7 +29,12 @@ struct A32JitState {
     std::array<u32, 16> Reg{}; // Current register file.
     // TODO: Mode-specific register sets unimplemented.
 
-    u32 CPSR_et = 0;
+    // Location Descriptor Lower 32-bits
+    // The location of these fields is important, and so we static_asert their layout.
+    u8 CPSR_et = 0;
+    u8 PSTATE_it = 0;
+    u16 FPSCR_mode = 0;
+
     u32 CPSR_ge = 0;
     u32 CPSR_q = 0;
     u32 CPSR_nzcv = 0;
@@ -70,14 +75,19 @@ struct A32JitState {
     u32 fpsr_qc = 0; // Dummy value
     u32 FPSCR_IDC = 0;
     u32 FPSCR_UFC = 0;
-    u32 FPSCR_mode = 0;
     u32 FPSCR_nzcv = 0;
     u32 old_FPSCR = 0;
     u32 Fpscr() const;
     void SetFpscr(u32 FPSCR);
 
-    u64 GetUniqueHash() const;
+    u64 GetUniqueHash() const {
+        return *reinterpret_cast<const u32*>(&CPSR_et) | (static_cast<u64>(Reg[15]) << 32);
+    }
 };
+
+static_assert(offsetof(A32JitState, PSTATE_it) == offsetof(A32JitState, CPSR_et) + 1);
+static_assert(offsetof(A32JitState, FPSCR_mode) == offsetof(A32JitState, CPSR_et) + 2);
+static_assert(sizeof(A32JitState::FPSCR_mode) + sizeof(A32JitState::PSTATE_it) + sizeof(A32JitState::CPSR_et) == sizeof(u32));
 
 #ifdef _MSC_VER
 #pragma warning(pop)
