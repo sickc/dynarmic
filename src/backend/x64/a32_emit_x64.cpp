@@ -408,18 +408,21 @@ void A32EmitX64::EmitA32SetCpsr(A32EmitContext& ctx, IR::Inst* inst) {
         code.and_(tmp, 0x07F0FDDF);
         code.mov(dword[r15 + offsetof(A32JitState, CPSR_jaifm)], tmp);
 
-        // CPSR_et and CPSR_ge
-        static_assert(offsetof(A32JitState, CPSR_et) + 4 == offsetof(A32JitState, CPSR_ge));
+        // Extract CPSR_et and CPSR_ge bits
         code.mov(tmp, 0x000f0220);
         code.pext(cpsr, cpsr, tmp);
-        code.mov(tmp.cvt64(), 0x01010101'00000003ull);
-        code.pdep(cpsr.cvt64(), cpsr.cvt64(), tmp.cvt64());
-        // We perform SWAR partitioned subtraction here, to negate the GE bytes.
-        code.mov(tmp.cvt64(), 0x80808080'00000003ull);
-        code.mov(tmp2.cvt64(), tmp.cvt64());
-        code.sub(tmp.cvt64(), cpsr.cvt64());
-        code.xor_(tmp.cvt64(), tmp2.cvt64());
-        code.mov(qword[r15 + offsetof(A32JitState, CPSR_et)], tmp.cvt64());
+        // CPSR_et
+        code.mov(tmp, cpsr);
+        code.and_(tmp, 3);
+        code.mov(dword[r15 + offsetof(A32JitState, CPSR_et)], tmp);
+        // CPSR_ge: Distribute GE bits to each byte then perform SWAR negation
+        code.shr(cpsr, 2);
+        code.mov(tmp2, 0x01010101);
+        code.pdep(cpsr, cpsr, tmp2);
+        code.not_(cpsr);
+        code.add(cpsr, 0x80808081);
+        code.xor_(cpsr, 0x80808080);
+        code.mov(dword[r15 + offsetof(A32JitState, CPSR_ge)], cpsr);
     } else {
         ctx.reg_alloc.HostCall(nullptr, args[0]);
         code.mov(code.ABI_PARAM2, code.r15);
