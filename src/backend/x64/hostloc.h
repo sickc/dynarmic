@@ -72,6 +72,7 @@ inline size_t HostLocBitWidth(HostLoc loc) {
 using HostLocList = std::initializer_list<HostLoc>;
 
 // RSP is preserved for function calls
+// R14 contains an emulated memory related pointer
 // R15 contains the JitState pointer
 const HostLocList any_gpr = {
     HostLoc::RAX,
@@ -87,7 +88,6 @@ const HostLocList any_gpr = {
     HostLoc::R11,
     HostLoc::R12,
     HostLoc::R13,
-    HostLoc::R14,
 };
 
 // XMM0 is reserved for use by instructions that implicitly use it as an argument
