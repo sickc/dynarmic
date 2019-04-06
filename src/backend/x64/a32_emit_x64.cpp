@@ -750,14 +750,14 @@ void A32EmitX64::EmitA32SetExclusive(A32EmitContext& ctx, IR::Inst* inst) {
     code.mov(dword[r15 + offsetof(A32JitState, exclusive_address)], address);
 }
 
-template <typename T, T (A32::UserCallbacks::*raw_fn)(A32::VAddr)>
-static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, const CodePtr wrapped_fn) {
+template <typename T>
+static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
     auto args = reg_alloc.GetArgumentInfo(inst);
 
     if (!config.page_table) {
         reg_alloc.HostCall(inst, {}, args[0]);
-        Devirtualize<raw_fn>(config.callbacks).EmitCall(code);
+        code.call(callback_fn);
         return;
     }
 
@@ -797,20 +797,20 @@ static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, c
     }
     code.jmp(end);
     code.L(abort);
-    code.call(wrapped_fn);
+    code.call(callback_fn);
     code.L(end);
 
     reg_alloc.DefineValue(inst, result);
 }
 
-template <typename T, void (A32::UserCallbacks::*raw_fn)(A32::VAddr, T)>
-static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, const CodePtr wrapped_fn) {
+template <typename T>
+static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
     auto args = reg_alloc.GetArgumentInfo(inst);
 
     if (!config.page_table) {
         reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
-        Devirtualize<raw_fn>(config.callbacks).EmitCall(code);
+        code.call(callback_fn);
         return;
     }
 
@@ -852,40 +852,40 @@ static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, 
     }
     code.jmp(end);
     code.L(abort);
-    code.call(wrapped_fn);
+    code.call(callback_fn);
     code.L(end);
 }
 
 void A32EmitX64::EmitA32ReadMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u8, &A32::UserCallbacks::MemoryRead8>(code, ctx.reg_alloc, inst, config, read_memory_8);
+    ReadMemory<u8>(code, ctx.reg_alloc, inst, config, read_memory_8);
 }
 
 void A32EmitX64::EmitA32ReadMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u16, &A32::UserCallbacks::MemoryRead16>(code, ctx.reg_alloc, inst, config, read_memory_16);
+    ReadMemory<u16>(code, ctx.reg_alloc, inst, config, read_memory_16);
 }
 
 void A32EmitX64::EmitA32ReadMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u32, &A32::UserCallbacks::MemoryRead32>(code, ctx.reg_alloc, inst, config, read_memory_32);
+    ReadMemory<u32>(code, ctx.reg_alloc, inst, config, read_memory_32);
 }
 
 void A32EmitX64::EmitA32ReadMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u64, &A32::UserCallbacks::MemoryRead64>(code, ctx.reg_alloc, inst, config, read_memory_64);
+    ReadMemory<u64>(code, ctx.reg_alloc, inst, config, read_memory_64);
 }
 
 void A32EmitX64::EmitA32WriteMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u8, &A32::UserCallbacks::MemoryWrite8>(code, ctx.reg_alloc, inst, config, write_memory_8);
+    WriteMemory<u8>(code, ctx.reg_alloc, inst, config, write_memory_8);
 }
 
 void A32EmitX64::EmitA32WriteMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u16, &A32::UserCallbacks::MemoryWrite16>(code, ctx.reg_alloc, inst, config, write_memory_16);
+    WriteMemory<u16>(code, ctx.reg_alloc, inst, config, write_memory_16);
 }
 
 void A32EmitX64::EmitA32WriteMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u32, &A32::UserCallbacks::MemoryWrite32>(code, ctx.reg_alloc, inst, config, write_memory_32);
+    WriteMemory<u32>(code, ctx.reg_alloc, inst, config, write_memory_32);
 }
 
 void A32EmitX64::EmitA32WriteMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u64, &A32::UserCallbacks::MemoryWrite64>(code, ctx.reg_alloc, inst, config, write_memory_64);
+    WriteMemory<u64>(code, ctx.reg_alloc, inst, config, write_memory_64);
 }
 
 template <typename T, void (A32::UserCallbacks::*fn)(A32::VAddr, T)>
