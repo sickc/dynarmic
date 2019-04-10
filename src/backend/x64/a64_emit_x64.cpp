@@ -52,6 +52,7 @@ bool A64EmitContext::AccurateNaN() const {
 
 A64EmitX64::A64EmitX64(BlockOfCode& code, A64::UserConfig conf, A64::Jit* jit_interface)
         : EmitX64(code), conf(conf), jit_interface{jit_interface} {
+    exception_handler.Register(code);
     GenMemory128Accessors();
     GenFastmemFallbacks();
     GenTerminalHandlers();

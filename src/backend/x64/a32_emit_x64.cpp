@@ -67,6 +67,7 @@ FP::FPCR A32EmitContext::FPCR() const {
 
 A32EmitX64::A32EmitX64(BlockOfCode& code, A32::UserConfig config, A32::Jit* jit_interface)
         : EmitX64(code), config(std::move(config)), jit_interface(jit_interface) {
+    exception_handler.Register(code);
     GenMemoryAccessors();
     GenTerminalHandlers();
     code.PreludeComplete();

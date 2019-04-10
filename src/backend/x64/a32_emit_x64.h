@@ -12,6 +12,7 @@
 #include "backend/x64/a32_jitstate.h"
 #include "backend/x64/block_range_information.h"
 #include "backend/x64/emit_x64.h"
+#include "backend/x64/exception_handler.h"
 #include "dynarmic/A32/a32.h"
 #include "dynarmic/A32/config.h"
 #include "frontend/A32/location_descriptor.h"
@@ -46,6 +47,7 @@ protected:
     const A32::UserConfig config;
     A32::Jit* jit_interface;
     BlockRangeInformation<u32> block_ranges;
+    ExceptionHandler exception_handler;
 
     struct FastDispatchEntry {
         u64 location_descriptor;
