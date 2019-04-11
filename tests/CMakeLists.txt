@@ -52,6 +52,12 @@ if (DYNARMIC_TESTS_USE_UNICORN)
     target_link_libraries(dynarmic_tests PRIVATE Unicorn::Unicorn)
 endif()
 
+if (ARCHITECTURE_x86_64)
+    target_sources(dynarmic_tests PRIVATE
+        backend/x64/exception_handler.cpp
+    )
+endif()
+
 add_executable(dynarmic_print_info
     print_info.cpp
 )

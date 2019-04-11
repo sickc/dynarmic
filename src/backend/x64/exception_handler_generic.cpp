@@ -14,8 +14,12 @@ struct ExceptionHandler::Impl final {
 ExceptionHandler::ExceptionHandler() = default;
 ExceptionHandler::~ExceptionHandler() = default;
 
-void ExceptionHandler::Register(BlockOfCode&) {
+void ExceptionHandler::Register(BlockOfCode&, std::unique_ptr<Callback>) {
     // Do nothing
+}
+
+bool ExceptionHandler::SupportsFastMem() const {
+    return false;
 }
 
 } // namespace Dynarmic::BackendX64

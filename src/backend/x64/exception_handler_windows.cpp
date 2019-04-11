@@ -174,7 +174,7 @@ private:
 ExceptionHandler::ExceptionHandler() = default;
 ExceptionHandler::~ExceptionHandler() = default;
 
-void ExceptionHandler::Register(BlockOfCode& code) {
+void ExceptionHandler::Register(BlockOfCode& code, std::unique_ptr<Callback>) {
     const auto prolog_info = GetPrologueInformation();
 
     code.align(16);
@@ -197,6 +197,10 @@ void ExceptionHandler::Register(BlockOfCode& code) {
     rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code.getCode());
 
     impl = std::make_unique<Impl>(rfuncs, code.getCode());
+}
+
+bool ExceptionHandler::SupportsFastMem() const {
+    return false;
 }
 
 } // namespace BackendX64
