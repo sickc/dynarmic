@@ -756,41 +756,42 @@ static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, c
     constexpr size_t bit_size = Common::BitSize<T>();
     auto args = reg_alloc.GetArgumentInfo(inst);
 
+    reg_alloc.UseScratch(args[0], ABI_PARAM2);
+    reg_alloc.ScratchGpr({ABI_RETURN});
+
+    const Xbyak::Reg64 result = reg_alloc.ScratchGpr();
+    const Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
+
     if (!config.page_table) {
-        reg_alloc.HostCall(inst, {}, args[0]);
         code.call(callback_fn);
+        code.mov(result, code.ABI_RETURN);
+        reg_alloc.DefineValue(inst, result);
         return;
     }
 
-    reg_alloc.UseScratch(args[0], ABI_PARAM2);
-
-    Xbyak::Reg64 result = reg_alloc.ScratchGpr({ABI_RETURN});
-    Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
-    Xbyak::Reg64 page_index = reg_alloc.ScratchGpr();
-    Xbyak::Reg64 page_offset = reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 tmp = code.ABI_RETURN;
 
     Xbyak::Label abort, end;
 
     code.mov(result, reinterpret_cast<u64>(config.page_table));
-    code.mov(page_index.cvt32(), vaddr);
-    code.shr(page_index.cvt32(), 12);
-    code.mov(result, qword[result + page_index * 8]);
+    code.mov(tmp.cvt32(), vaddr);
+    code.shr(tmp.cvt32(), 12);
+    code.mov(result, qword[result + tmp * 8]);
     code.test(result, result);
     code.jz(abort);
-    code.mov(page_offset.cvt32(), vaddr);
-    code.and_(page_offset.cvt32(), 4095);
+    code.and_(vaddr, 4095);
     switch (bit_size) {
     case 8:
-        code.movzx(result, code.byte[result + page_offset]);
+        code.movzx(result, code.byte[result + vaddr.cvt64()]);
         break;
     case 16:
-        code.movzx(result, word[result + page_offset]);
+        code.movzx(result, word[result + vaddr.cvt64()]);
         break;
     case 32:
-        code.mov(result.cvt32(), dword[result + page_offset]);
+        code.mov(result.cvt32(), dword[result + vaddr.cvt64()]);
         break;
     case 64:
-        code.mov(result.cvt64(), qword[result + page_offset]);
+        code.mov(result.cvt64(), qword[result + vaddr.cvt64()]);
         break;
     default:
         ASSERT_MSG(false, "Invalid bit_size");
@@ -799,6 +800,7 @@ static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, c
     code.jmp(end);
     code.L(abort);
     code.call(callback_fn);
+    code.mov(result, code.ABI_RETURN);
     code.L(end);
 
     reg_alloc.DefineValue(inst, result);
@@ -809,43 +811,41 @@ static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, 
     constexpr size_t bit_size = Common::BitSize<T>();
     auto args = reg_alloc.GetArgumentInfo(inst);
 
-    if (!config.page_table) {
-        reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
-        code.call(callback_fn);
-        return;
-    }
-
     reg_alloc.ScratchGpr({ABI_RETURN});
     reg_alloc.UseScratch(args[0], ABI_PARAM2);
     reg_alloc.UseScratch(args[1], ABI_PARAM3);
 
     Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
     Xbyak::Reg64 value = code.ABI_PARAM3;
-    Xbyak::Reg64 page_index = reg_alloc.ScratchGpr();
-    Xbyak::Reg64 page_offset = reg_alloc.ScratchGpr();
+
+    if (!config.page_table) {
+        code.call(callback_fn);
+        return;
+    }
+
+    Xbyak::Reg64 tmp = reg_alloc.ScratchGpr();
 
     Xbyak::Label abort, end;
 
     code.mov(rax, reinterpret_cast<u64>(config.page_table));
-    code.mov(page_index.cvt32(), vaddr);
-    code.shr(page_index.cvt32(), 12);
-    code.mov(rax, qword[rax + page_index * 8]);
+    code.mov(tmp.cvt32(), vaddr);
+    code.shr(tmp.cvt32(), 12);
+    code.mov(rax, qword[rax + tmp * 8]);
     code.test(rax, rax);
     code.jz(abort);
-    code.mov(page_offset.cvt32(), vaddr);
-    code.and_(page_offset.cvt32(), 4095);
+    code.and_(vaddr, 4095);
     switch (bit_size) {
     case 8:
-        code.mov(code.byte[rax + page_offset], value.cvt8());
+        code.mov(code.byte[rax + vaddr.cvt64()], value.cvt8());
         break;
     case 16:
-        code.mov(word[rax + page_offset], value.cvt16());
+        code.mov(word[rax + vaddr.cvt64()], value.cvt16());
         break;
     case 32:
-        code.mov(dword[rax + page_offset], value.cvt32());
+        code.mov(dword[rax + vaddr.cvt64()], value.cvt32());
         break;
     case 64:
-        code.mov(qword[rax + page_offset], value.cvt64());
+        code.mov(qword[rax + vaddr.cvt64()], value.cvt64());
         break;
     default:
         ASSERT_MSG(false, "Invalid bit_size");
