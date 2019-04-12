@@ -74,20 +74,27 @@ using HostLocList = std::initializer_list<HostLoc>;
 // RSP is preserved for function calls
 // R14 contains an emulated memory related pointer
 // R15 contains the JitState pointer
+// In order of desireablity based first on ABI use and secondarily on codesize.
 const HostLocList any_gpr = {
-    HostLoc::RAX,
     HostLoc::RBX,
-    HostLoc::RCX,
-    HostLoc::RDX,
+#ifdef _WIN32
     HostLoc::RSI,
     HostLoc::RDI,
+#endif
     HostLoc::RBP,
-    HostLoc::R8,
-    HostLoc::R9,
-    HostLoc::R10,
-    HostLoc::R11,
     HostLoc::R12,
     HostLoc::R13,
+    HostLoc::R10,
+    HostLoc::R11,
+    HostLoc::R9,
+    HostLoc::R8,
+    HostLoc::RDX,
+    HostLoc::RCX,
+#ifndef _WIN32
+    HostLoc::RSI,
+    HostLoc::RDI,
+#endif
+    HostLoc::RAX,
 };
 
 // XMM0 is reserved for use by instructions that implicitly use it as an argument

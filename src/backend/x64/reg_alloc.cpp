@@ -440,7 +440,7 @@ HostLoc RegAlloc::SelectARegister(HostLocList desired_locations) const {
     std::vector<HostLoc> candidates = desired_locations;
 
     // Find all locations that have not been allocated..
-    auto allocated_locs = std::partition(candidates.begin(), candidates.end(), [this](auto loc){
+    auto allocated_locs = std::stable_partition(candidates.begin(), candidates.end(), [this](auto loc){
         return !this->LocInfo(loc).IsLocked();
     });
     candidates.erase(allocated_locs, candidates.end());
@@ -449,7 +449,7 @@ HostLoc RegAlloc::SelectARegister(HostLocList desired_locations) const {
     // Selects the best location out of the available locations.
     // TODO: Actually do LRU or something. Currently we just try to pick something without a value if possible.
 
-    std::partition(candidates.begin(), candidates.end(), [this](auto loc){
+    std::stable_partition(candidates.begin(), candidates.end(), [this](auto loc){
         return this->LocInfo(loc).IsEmpty();
     });
 
