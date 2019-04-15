@@ -797,7 +797,7 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
         code.mov(result, code.ABI_RETURN);
     };
 
-    if (config.fastmem_pointer) {
+    if (ShouldFastMem()) {
         const CodePtr patch_location = code.getCurr();
         switch (bit_size) {
         case 8:
