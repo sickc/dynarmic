@@ -165,14 +165,15 @@ void BlockOfCode::GenRunCode() {
     ABI_PushCalleeSaveRegistersAndAdjustStack(*this);
 
     mov(r15, ABI_PARAM1);
-    mov(r14, ABI_PARAM2); // save temporarily in non-volatile register
+    mov(r14, cb.value_in_r14);
+    mov(r13, ABI_PARAM2); // save temporarily in non-volatile register
 
     cb.GetTicksRemaining->EmitCall(*this);
     mov(qword[r15 + jsi.offsetof_cycles_to_run], ABI_RETURN);
     mov(qword[r15 + jsi.offsetof_cycles_remaining], ABI_RETURN);
 
     SwitchMxcsrOnEntry();
-    jmp(r14);
+    jmp(r13);
 
     align();
     run_code = getCurr<RunCodeFuncType>();
@@ -184,6 +185,7 @@ void BlockOfCode::GenRunCode() {
     ABI_PushCalleeSaveRegistersAndAdjustStack(*this);
 
     mov(r15, ABI_PARAM1);
+    mov(r14, cb.value_in_r14);
 
     cb.GetTicksRemaining->EmitCall(*this);
     mov(qword[r15 + jsi.offsetof_cycles_to_run], ABI_RETURN);

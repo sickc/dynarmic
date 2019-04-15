@@ -67,7 +67,7 @@ FP::FPCR A32EmitContext::FPCR() const {
 
 A32EmitX64::A32EmitX64(BlockOfCode& code, A32::UserConfig config, A32::Jit* jit_interface)
         : EmitX64(code), config(std::move(config)), jit_interface(jit_interface) {
-    exception_handler.Register(code);
+    exception_handler.Register(code, std::make_unique<ArgCallback>(Devirtualize<&A32EmitX64::FastMemCallback>(this)));
     GenMemoryAccessors();
     GenTerminalHandlers();
     code.PreludeComplete();
@@ -138,6 +138,7 @@ void A32EmitX64::ClearCache() {
     EmitX64::ClearCache();
     block_ranges.ClearCache();
     ClearFastDispatchTable();
+    fastmem_patch_info.clear();
 }
 
 void A32EmitX64::InvalidateCacheRanges(const boost::icl::interval_set<u32>& ranges) {
@@ -752,7 +753,7 @@ void A32EmitX64::EmitA32SetExclusive(A32EmitContext& ctx, IR::Inst* inst) {
 }
 
 template <typename T>
-static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, const CodePtr callback_fn) {
+void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
     auto args = reg_alloc.GetArgumentInfo(inst);
 
@@ -761,6 +762,91 @@ static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, c
 
     const Xbyak::Reg64 result = reg_alloc.ScratchGpr();
     const Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
+    const Xbyak::Reg64 tmp = code.ABI_RETURN;
+
+    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](Xbyak::Label end) {
+        Xbyak::Label abort;
+
+        code.mov(result, reinterpret_cast<u64>(config.page_table));
+        code.mov(tmp.cvt32(), vaddr);
+        code.shr(tmp.cvt32(), 12);
+        code.mov(result, qword[result + tmp * 8]);
+        code.test(result, result);
+        code.jz(abort);
+        code.and_(vaddr, 4095);
+        switch (bit_size) {
+        case 8:
+            code.movzx(result, code.byte[result + vaddr.cvt64()]);
+            break;
+        case 16:
+            code.movzx(result, word[result + vaddr.cvt64()]);
+            break;
+        case 32:
+            code.mov(result.cvt32(), dword[result + vaddr.cvt64()]);
+            break;
+        case 64:
+            code.mov(result.cvt64(), qword[result + vaddr.cvt64()]);
+            break;
+        default:
+            ASSERT_MSG(false, "Invalid bit_size");
+            break;
+        }
+        code.jmp(end);
+        code.L(abort);
+        code.call(callback_fn);
+        code.mov(result, code.ABI_RETURN);
+    };
+
+    if (config.fastmem_pointer) {
+        const CodePtr patch_location = code.getCurr();
+        switch (bit_size) {
+        case 8:
+            code.movzx(result, code.byte[r14 + vaddr.cvt64()]);
+            break;
+        case 16:
+            code.movzx(result, word[r14 + vaddr.cvt64()]);
+            break;
+        case 32:
+            code.mov(result.cvt32(), dword[r14 + vaddr.cvt64()]);
+            break;
+        case 64:
+            code.mov(result.cvt64(), qword[r14 + vaddr.cvt64()]);
+            break;
+        default:
+            ASSERT_MSG(false, "Invalid bit_size");
+            break;
+        }
+        code.EnsurePatchLocationSize(patch_location, 5);
+
+        fastmem_patch_info.emplace(
+            reinterpret_cast<u64>(patch_location),
+            FastMemPatchInfo{
+                [this, patch_location, page_table_lookup, callback_fn, result]{
+                    Xbyak::Label far, end;
+
+                    const CodePtr save_code_ptr = code.getCurr();
+                    code.SetCodePtr(patch_location);
+                    code.jmp(far, code.T_NEAR);
+                    code.L(end);
+                    code.EnsurePatchLocationSize(patch_location, 5);
+                    code.SetCodePtr(save_code_ptr);
+
+                    code.SwitchToFarCode();
+                    code.L(far);
+                    if (config.page_table) {
+                        page_table_lookup(end);
+                    } else {
+                        code.call(callback_fn);
+                        code.mov(result, code.ABI_RETURN);
+                    }
+                    code.jmp(end);
+                    code.SwitchToNearCode();
+                }
+            });
+
+        reg_alloc.DefineValue(inst, result);
+        return;
+    }
 
     if (!config.page_table) {
         code.call(callback_fn);
@@ -769,38 +855,8 @@ static void ReadMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, c
         return;
     }
 
-    const Xbyak::Reg64 tmp = code.ABI_RETURN;
-
-    Xbyak::Label abort, end;
-
-    code.mov(result, reinterpret_cast<u64>(config.page_table));
-    code.mov(tmp.cvt32(), vaddr);
-    code.shr(tmp.cvt32(), 12);
-    code.mov(result, qword[result + tmp * 8]);
-    code.test(result, result);
-    code.jz(abort);
-    code.and_(vaddr, 4095);
-    switch (bit_size) {
-    case 8:
-        code.movzx(result, code.byte[result + vaddr.cvt64()]);
-        break;
-    case 16:
-        code.movzx(result, word[result + vaddr.cvt64()]);
-        break;
-    case 32:
-        code.mov(result.cvt32(), dword[result + vaddr.cvt64()]);
-        break;
-    case 64:
-        code.mov(result.cvt64(), qword[result + vaddr.cvt64()]);
-        break;
-    default:
-        ASSERT_MSG(false, "Invalid bit_size");
-        break;
-    }
-    code.jmp(end);
-    code.L(abort);
-    code.call(callback_fn);
-    code.mov(result, code.ABI_RETURN);
+    Xbyak::Label end;
+    page_table_lookup(end);
     code.L(end);
 
     reg_alloc.DefineValue(inst, result);
@@ -858,19 +914,19 @@ static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, 
 }
 
 void A32EmitX64::EmitA32ReadMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u8>(code, ctx.reg_alloc, inst, config, read_memory_8);
+    ReadMemory<u8>(ctx.reg_alloc, inst, read_memory_8);
 }
 
 void A32EmitX64::EmitA32ReadMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u16>(code, ctx.reg_alloc, inst, config, read_memory_16);
+    ReadMemory<u16>(ctx.reg_alloc, inst, read_memory_16);
 }
 
 void A32EmitX64::EmitA32ReadMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u32>(code, ctx.reg_alloc, inst, config, read_memory_32);
+    ReadMemory<u32>(ctx.reg_alloc, inst, read_memory_32);
 }
 
 void A32EmitX64::EmitA32ReadMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u64>(code, ctx.reg_alloc, inst, config, read_memory_64);
+    ReadMemory<u64>(ctx.reg_alloc, inst, read_memory_64);
 }
 
 void A32EmitX64::EmitA32WriteMemory8(A32EmitContext& ctx, IR::Inst* inst) {
@@ -1217,6 +1273,17 @@ std::string A32EmitX64::LocationDescriptorToFriendlyName(const IR::LocationDescr
                        descriptor.PC(),
                        descriptor.EFlag() ? "be" : "le",
                        descriptor.FPSCR().Value());
+}
+
+bool A32EmitX64::ShouldFastMem() const {
+    return config.fastmem_pointer && exception_handler.SupportsFastMem();
+}
+
+void A32EmitX64::FastMemCallback(X64State& ts) {
+    const auto iter = fastmem_patch_info.find(ts.rip);
+    ASSERT(iter != fastmem_patch_info.end());
+    iter->second.callback();
+    fastmem_patch_info.erase(iter);
 }
 
 void A32EmitX64::EmitTerminalImpl(IR::Term::Interpret terminal, IR::LocationDescriptor initial_location) {

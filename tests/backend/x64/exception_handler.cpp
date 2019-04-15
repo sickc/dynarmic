@@ -21,6 +21,7 @@ static BlockOfCode MakeBlockOfCode() {
         std::make_unique<SimpleCallback>(&nullfn),
         std::make_unique<SimpleCallback>(&nullfn),
         std::make_unique<SimpleCallback>(&nullfn),
+        0,
     }, JitStateInfo{A32JitState{}}};
 }
 

@@ -190,6 +190,7 @@ struct ExceptionHandler::Impl final {
         code.align(16);
         const u64 thunk = code.getCurr<u64>();
 
+        code.sub(code.rsp, sizeof(u64));
         code.pushf();
         code.sub(code.rsp, sizeof(X64State) - sizeof(u64));
         for (int i = 0; i < 16; i++) {
@@ -201,14 +202,14 @@ struct ExceptionHandler::Impl final {
         for (int i = 0; i < 16; i++) {
             code.movaps(code.xword[code.rsp + offsetof(X64State, xmm) + i * sizeof(X64State::Vector)], Xbyak::Xmm(i));
         }
-        code.mov(code.rax, code.qword[code.rsp + sizeof(X64State)]);
+        code.mov(code.rax, code.qword[code.rsp + sizeof(X64State) + sizeof(u64)]);
         code.mov(code.qword[code.rsp + offsetof(X64State, rip)], code.rax);
         cb->EmitCall(code, [&](RegList param) {
             code.mov(param[0], code.rsp);
             static_assert(sizeof(X64State) % 16 == 0, "Will need to adjust rsp otherwise");
         });
         code.mov(code.rax, code.qword[code.rsp + offsetof(X64State, rip)]);
-        code.mov(code.qword[code.rsp + sizeof(X64State)], code.rax);
+        code.mov(code.qword[code.rsp + sizeof(X64State) + sizeof(u64)], code.rax);
         for (int i = 0; i < 16; i++) {
             if (i == 4) {
                 continue; // Skip rsp
@@ -220,6 +221,7 @@ struct ExceptionHandler::Impl final {
         }
         code.add(code.rsp, sizeof(X64State) - sizeof(u64));
         code.popf();
+        code.add(code.rsp, sizeof(u64));
         code.ret();
 
         CodeBlockInfo cbi;

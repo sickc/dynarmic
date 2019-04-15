@@ -31,13 +31,14 @@ static RunCodeCallbacks GenRunCodeCallbacks(A64::UserCallbacks* cb, CodePtr (*Lo
         std::make_unique<ArgCallback>(LookupBlock, reinterpret_cast<u64>(arg)),
         std::make_unique<ArgCallback>(Devirtualize<&A64::UserCallbacks::AddTicks>(cb)),
         std::make_unique<ArgCallback>(Devirtualize<&A64::UserCallbacks::GetTicksRemaining>(cb)),
+        0,
     };
 }
 
 struct Jit::Impl final {
 public:
     Impl(Jit* jit, UserConfig conf)
-        : conf(conf) 
+        : conf(conf)
         , block_of_code(GenRunCodeCallbacks(conf.callbacks, &GetCurrentBlockThunk, this), JitStateInfo{jit_state})
         , emitter(block_of_code, conf, jit)
     {

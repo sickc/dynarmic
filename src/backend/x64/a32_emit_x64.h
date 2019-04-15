@@ -7,7 +7,9 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <optional>
+#include <unordered_map>
 
 #include "backend/x64/a32_jitstate.h"
 #include "backend/x64/block_range_information.h"
@@ -20,6 +22,7 @@
 
 namespace Dynarmic::BackendX64 {
 
+struct X64State;
 class RegAlloc;
 
 struct A32EmitContext final : public EmitContext {
@@ -68,6 +71,8 @@ protected:
     const void* write_memory_32;
     const void* write_memory_64;
     void GenMemoryAccessors();
+    template<typename T>
+    void ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn);
 
     const void* terminal_handler_pop_rsb_hint;
     const void* terminal_handler_fast_dispatch_hint = nullptr;
@@ -84,6 +89,14 @@ protected:
 
     // Helpers
     std::string LocationDescriptorToFriendlyName(const IR::LocationDescriptor&) const override;
+
+    // Fastmem
+    struct FastMemPatchInfo {
+        std::function<void()> callback;
+    };
+    std::unordered_map<u64, FastMemPatchInfo> fastmem_patch_info;
+    bool ShouldFastMem() const;
+    void FastMemCallback(X64State& ts);
 
     // Terminal instruction emitters
     void EmitTerminalImpl(IR::Term::Interpret terminal, IR::LocationDescriptor initial_location) override;

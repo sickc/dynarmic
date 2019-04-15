@@ -26,6 +26,7 @@ struct RunCodeCallbacks {
     std::unique_ptr<Callback> LookupBlock;
     std::unique_ptr<Callback> AddTicks;
     std::unique_ptr<Callback> GetTicksRemaining;
+    u64 value_in_r14;
 };
 
 class BlockOfCode final : public Xbyak::CodeGenerator {
