@@ -59,8 +59,10 @@ TEST_CASE("Exception handler callback works", "[backend/x64]") {
 
     code.align(16);
     const auto f = code.getCurr<int(*)()>();
+    code.sub(rsp, 8);
     code.mov(rax, 0);
     code.mov(dword[rax], 0);
+    code.add(rsp, 8);
     code.ret();
 
     REQUIRE(f() == 42);
