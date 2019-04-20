@@ -65,5 +65,22 @@ TEST_CASE("Exception handler callback works", "[backend/x64]") {
     code.add(rsp, 8);
     code.ret();
 
+    code.align(16);
+    const auto g = code.getCurr<u64(*)()>();
+    code.sub(rsp, 8);
+    code.mov(rax, rsp);
+    code.add(rsp, 8);
+    code.ret();
+
+    code.align(16);
+    const auto h = code.getCurr<u64(*)()>();
+    code.sub(rsp, 8);
+    code.mov(rax, 0);
+    code.mov(dword[rax], 0);
+    code.mov(rax, rsp);
+    code.add(rsp, 8);
+    code.ret();
+
     REQUIRE(f() == 42);
+    REQUIRE(g() == h());
 }
