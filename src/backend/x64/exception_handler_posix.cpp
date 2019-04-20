@@ -100,43 +100,32 @@ void SigHandler::RemoveCodeBlock(u64 rip) {
 void SigHandler::SigAction(int sig, siginfo_t* info, void* raw_context) {
     ASSERT(sig == SIGSEGV || sig == SIGBUS);
 
-    u64& rip =
 #if defined(__APPLE__)
-        ((ucontext_t*)raw_context)->uc_mcontext->__ss.__rip
+    #define CTX_RIP (((ucontext_t*)raw_context)->uc_mcontext->__ss.__rip)
+    #define CTX_RSP (((ucontext_t*)raw_context)->uc_mcontext->__ss.__rsp)
 #elif defined(__linux__)
-        ((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RIP]
+    #define CTX_RIP (((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RIP])
+    #define CTX_RSP (((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RSP])
 #elif defined(__FreeBSD__)
-        ((ucontext_t*)raw_context)->uc_mcontext.mc_rip
+    #define CTX_RIP (((ucontext_t*)raw_context)->uc_mcontext.mc_rip)
+    #define CTX_RSP (((ucontext_t*)raw_context)->uc_mcontext.mc_rsp)
 #else
-        #error "Unknown platform"
+    #error "Unknown platform"
 #endif
-    ;
 
     std::lock_guard<std::mutex> guard(sig_handler.code_block_infos_mutex);
 
-    const auto iter = sig_handler.FindCodeBlockInfo(rip);
+    const auto iter = sig_handler.FindCodeBlockInfo(CTX_RIP);
     if (iter != sig_handler.code_block_infos.end()) {
-        u64& rsp =
-#if defined(__APPLE__)
-            ((ucontext_t*)raw_context)->uc_mcontext->__ss.__rsp
-#elif defined(__linux__)
-            ((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RSP]
-#elif defined(__FreeBSD__)
-            ((ucontext_t*)raw_context)->uc_mcontext.mc_rsp
-#else
-            #error "Unknown platform"
-#endif
-        ;
-
         // Simulate function call to thunk.
-        rsp -= sizeof(u64);
-        *Common::BitCast<u64*>(rsp) = rip;
-        rip = iter->thunk_address;
+        CTX_RSP -= sizeof(u64);
+        *Common::BitCast<u64*>(CTX_RSP) = CTX_RIP;
+        CTX_RIP = iter->thunk_address;
 
         return;
     }
 
-    fmt::print(stderr, "dynarmic: POSIX SigHandler: Exception was not in registered code blocks (rip {:#016x})\n", rip);
+    fmt::print(stderr, "dynarmic: POSIX SigHandler: Exception was not in registered code blocks (rip {:#016x})\n", CTX_RIP);
 
     struct sigaction* retry_sa = sig == SIGSEGV ? &sig_handler.old_sa_segv : &sig_handler.old_sa_bus;
     if (retry_sa->sa_flags & SA_SIGINFO) {
