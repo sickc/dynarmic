@@ -317,4 +317,4 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_compile_definitions(dynarmic PRIVATE FMT_USE_WINDOWS_H=0)
 endif()
 
-export(TARGETS dynarmic boost fmt xbyak FILE "dynarmic-config.cmake")
+#export(TARGETS dynarmic boost fmt xbyak FILE "dynarmic-config.cmake")
