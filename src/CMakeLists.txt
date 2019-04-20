@@ -285,6 +285,8 @@ if (ARCHITECTURE_x86_64)
                 backend/x64/mig/mach_exc_server.h
             )
         endif()
+    elseif (UNIX)
+        target_sources(dynarmic PRIVATE backend/x64/exception_handler_posix.cpp)
     else()
         target_sources(dynarmic PRIVATE backend/x64/exception_handler_generic.cpp)
     endif()
