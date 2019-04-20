@@ -63,16 +63,18 @@ SigHandler sig_handler;
 SigHandler::SigHandler() {
     // Method below from dolphin.
 
+    constexpr size_t signal_stack_size = std::max(SIGSTKSZ, 2 * 1024 * 1024);
+
     stack_t signal_stack;
-    signal_stack.ss_sp = malloc(SIGSTKSZ);
-    signal_stack.ss_size = SIGSTKSZ;
+    signal_stack.ss_sp = malloc(signal_stack_size);
+    signal_stack.ss_size = signal_stack_size;
     signal_stack.ss_flags = 0;
     ASSERT_MSG(sigaltstack(&signal_stack, nullptr) == 0, "dynarmic: POSIX SigHandler: init failure at sigaltstack");
 
     struct sigaction sa;
     sa.sa_handler = nullptr;
     sa.sa_sigaction = &SigHandler::SigAction;
-    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &old_sa_segv);
 #ifdef __APPLE__
@@ -102,13 +104,13 @@ void SigHandler::SigAction(int sig, siginfo_t* info, void* raw_context) {
 
 #if defined(__APPLE__)
     #define CTX_RIP (((ucontext_t*)raw_context)->uc_mcontext->__ss.__rip)
-    #define CTX_RSP (((ucontext_t*)raw_context)->uc_mcontext->__ss.__rsp)
+    #define CTX_RAX (((ucontext_t*)raw_context)->uc_mcontext->__ss.__rax)
 #elif defined(__linux__)
     #define CTX_RIP (((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RIP])
-    #define CTX_RSP (((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RSP])
+    #define CTX_RAX (((ucontext_t*)raw_context)->uc_mcontext.gregs[REG_RAX])
 #elif defined(__FreeBSD__)
     #define CTX_RIP (((ucontext_t*)raw_context)->uc_mcontext.mc_rip)
-    #define CTX_RSP (((ucontext_t*)raw_context)->uc_mcontext.mc_rsp)
+    #define CTX_RAX (((ucontext_t*)raw_context)->uc_mcontext.mc_rax)
 #else
     #error "Unknown platform"
 #endif
@@ -117,9 +119,7 @@ void SigHandler::SigAction(int sig, siginfo_t* info, void* raw_context) {
 
     const auto iter = sig_handler.FindCodeBlockInfo(CTX_RIP);
     if (iter != sig_handler.code_block_infos.end()) {
-        // Simulate function call to thunk.
-        CTX_RSP -= sizeof(u64);
-        *Common::BitCast<u64*>(CTX_RSP) = CTX_RIP;
+        CTX_RAX = CTX_RIP;
         CTX_RIP = iter->thunk_address;
 
         return;
@@ -150,7 +150,7 @@ struct ExceptionHandler::Impl final {
 
         code.align(16);
         const u64 thunk = code.getCurr<u64>();
-
+        code.push(code.rax);
         code.sub(code.rsp, sizeof(u64));
         code.pushf();
         code.sub(code.rsp, sizeof(X64State) - sizeof(u64));
