@@ -822,17 +822,17 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
             reinterpret_cast<u64>(patch_location),
             FastMemPatchInfo{
                 [this, patch_location, page_table_lookup, callback_fn, result]{
-                    Xbyak::Label far, end;
+                    Xbyak::Label thunk, end;
 
                     const CodePtr save_code_ptr = code.getCurr();
                     code.SetCodePtr(patch_location);
-                    code.jmp(far, code.T_NEAR);
+                    code.jmp(thunk, code.T_NEAR);
                     code.L(end);
                     code.EnsurePatchLocationSize(patch_location, 5);
                     code.SetCodePtr(save_code_ptr);
 
                     code.SwitchToFarCode();
-                    code.L(far);
+                    code.L(thunk);
                     if (config.page_table) {
                         page_table_lookup(end);
                     } else {
@@ -931,17 +931,17 @@ void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr 
             reinterpret_cast<u64>(patch_location),
             FastMemPatchInfo{
                 [this, patch_location, page_table_lookup, callback_fn]{
-                    Xbyak::Label far, end;
+                    Xbyak::Label thunk, end;
 
                     const CodePtr save_code_ptr = code.getCurr();
                     code.SetCodePtr(patch_location);
-                    code.jmp(far, code.T_NEAR);
+                    code.jmp(thunk, code.T_NEAR);
                     code.L(end);
                     code.EnsurePatchLocationSize(patch_location, 5);
                     code.SetCodePtr(save_code_ptr);
 
                     code.SwitchToFarCode();
-                    code.L(far);
+                    code.L(thunk);
                     if (config.page_table) {
                         page_table_lookup(end);
                     } else {
