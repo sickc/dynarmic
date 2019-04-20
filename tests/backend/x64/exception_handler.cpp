@@ -17,7 +17,7 @@ using namespace Dynarmic::BackendX64;
 
 static void nullfn() {}
 static BlockOfCode MakeBlockOfCode() {
-    return BlockOfCode{RunCodeCallbacks{
+    return {RunCodeCallbacks{
         std::make_unique<SimpleCallback>(&nullfn),
         std::make_unique<SimpleCallback>(&nullfn),
         std::make_unique<SimpleCallback>(&nullfn),
