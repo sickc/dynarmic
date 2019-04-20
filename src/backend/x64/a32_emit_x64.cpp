@@ -764,7 +764,7 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
     const Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
     const Xbyak::Reg64 tmp = code.ABI_RETURN;
 
-    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](Xbyak::Label end) {
+    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](Xbyak::Label& end) {
         Xbyak::Label abort;
 
         code.mov(result, reinterpret_cast<u64>(config.page_table));
