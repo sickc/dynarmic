@@ -67,10 +67,15 @@ struct UNWIND_INFO {
     UBYTE FrameOffset : 4;
     // UNWIND_CODE UnwindCode[];
     // With Flags == 0 there are no additional fields.
+    // OPTIONAL UNW_EXCEPTION_INFO ExceptionInfo;
 };
 
-namespace Dynarmic {
-namespace BackendX64 {
+struct UNW_EXCEPTION_INFO {
+    ULONG ExceptionHandler;
+    // OPTIONAL ARBITRARY HandlerData;
+};
+
+namespace Dynarmic::BackendX64 {
 
 struct PrologueInformation {
     std::vector<UNWIND_CODE> unwind_code;
@@ -174,13 +179,80 @@ private:
 ExceptionHandler::ExceptionHandler() = default;
 ExceptionHandler::~ExceptionHandler() = default;
 
-void ExceptionHandler::Register(BlockOfCode& code, std::unique_ptr<Callback>) {
+static const u8* EmitThunk(BlockOfCode& code, std::unique_ptr<Callback> cb) {
+    code.align(16);
+    const u8* cb_thunk = code.getCurr<u8*>();
+    code.push(code.rax);
+    code.sub(code.rsp, sizeof(u64));
+    code.pushf();
+    code.sub(code.rsp, sizeof(X64State) - sizeof(u64));
+    for (int i = 0; i < 16; i++) {
+        if (i == 4) {
+            continue; // Skip rsp
+        }
+        code.mov(code.qword[code.rsp + offsetof(X64State, gpr) + i * sizeof(u64)], Xbyak::Reg64(i));
+    }
+    for (int i = 0; i < 16; i++) {
+        code.movaps(code.xword[code.rsp + offsetof(X64State, xmm) + i * sizeof(X64State::Vector)], Xbyak::Xmm(i));
+    }
+    code.mov(code.rax, code.qword[code.rsp + sizeof(X64State) + sizeof(u64)]);
+    code.mov(code.qword[code.rsp + offsetof(X64State, rip)], code.rax);
+    cb->EmitCall(code, [&](RegList param) {
+        code.mov(param[0], code.rsp);
+        static_assert(sizeof(X64State) % 16 == 0, "Will need to adjust rsp otherwise");
+    });
+    code.mov(code.rax, code.qword[code.rsp + offsetof(X64State, rip)]);
+    code.mov(code.qword[code.rsp + sizeof(X64State) + sizeof(u64)], code.rax);
+    for (int i = 0; i < 16; i++) {
+        if (i == 4) {
+            continue; // Skip rsp
+        }
+        code.mov(Xbyak::Reg64(i), code.qword[code.rsp + offsetof(X64State, gpr) + i * sizeof(u64)]);
+    }
+    for (int i = 0; i < 16; i++) {
+        code.movaps(Xbyak::Xmm(i), code.xword[code.rsp + offsetof(X64State, xmm) + i * sizeof(X64State::Vector)]);
+    }
+    code.add(code.rsp, sizeof(X64State) - sizeof(u64));
+    code.popf();
+    code.add(code.rsp, sizeof(u64));
+    code.ret();
+
+    return cb_thunk;
+}
+
+void ExceptionHandler::Register(BlockOfCode& code, std::unique_ptr<Callback> cb) {
+    const u8* exception_handler = [&] {
+        if (cb) {
+            const u8* cb_thunk = EmitThunk(code, std::move(cb));
+
+            code.align(16);
+            const u8* exception_handler = code.getCurr<u8*>();
+            // Our 3rd argument is a PCONTEXT. We'll setup our call using it.
+            code.mov(code.rax, code.qword[code.ABI_PARAM3 + offsetof(CONTEXT, Rip)]);
+            code.mov(code.qword[code.ABI_PARAM3 + offsetof(CONTEXT, Rax)], code.rax);
+            code.mov(code.rax, reinterpret_cast<u64>(cb_thunk));
+            code.mov(code.qword[code.ABI_PARAM3 + offsetof(CONTEXT, Rip)], code.rax);
+            code.mov(code.eax, static_cast<u32>(ExceptionContinueExecution));
+            code.ret();
+
+            return exception_handler;
+        }
+
+        code.align(16);
+        const u8* exception_handler = code.getCurr<u8*>();
+        code.mov(code.eax, static_cast<u32>(ExceptionContinueSearch));
+        code.ret();
+
+        return exception_handler;
+    }();
+
+
     const auto prolog_info = GetPrologueInformation();
 
     code.align(16);
     UNWIND_INFO* unwind_info = static_cast<UNWIND_INFO*>(code.AllocateFromCodeSpace(sizeof(UNWIND_INFO)));
     unwind_info->Version = 1;
-    unwind_info->Flags = 0; // No special exception handling required.
+    unwind_info->Flags = UNW_FLAG_EHANDLER;
     unwind_info->SizeOfProlog = prolog_info.prolog_size;
     unwind_info->CountOfCodes = static_cast<UBYTE>(prolog_info.number_of_unwind_code_entries);
     unwind_info->FrameRegister = 0; // No frame register present
@@ -189,19 +261,21 @@ void ExceptionHandler::Register(BlockOfCode& code, std::unique_ptr<Callback>) {
     const size_t size_of_unwind_code = sizeof(UNWIND_CODE) * prolog_info.unwind_code.size();
     UNWIND_CODE* unwind_code = static_cast<UNWIND_CODE*>(code.AllocateFromCodeSpace(size_of_unwind_code));
     memcpy(unwind_code, prolog_info.unwind_code.data(), size_of_unwind_code);
+    // UNWIND_INFO::ExceptionInfo field:
+    UNW_EXCEPTION_INFO* except_info = static_cast<UNW_EXCEPTION_INFO*>(code.AllocateFromCodeSpace(sizeof(UNW_EXCEPTION_INFO)));
+    except_info->ExceptionHandler = static_cast<ULONG>(exception_handler - code.getCode<u8*>());
 
     code.align(16);
     RUNTIME_FUNCTION* rfuncs = static_cast<RUNTIME_FUNCTION*>(code.AllocateFromCodeSpace(sizeof(RUNTIME_FUNCTION)));
     rfuncs->BeginAddress = static_cast<DWORD>(0);
     rfuncs->EndAddress = static_cast<DWORD>(code.GetTotalCodeSize());
-    rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code.getCode());
+    rfuncs->UnwindData = static_cast<DWORD>(reinterpret_cast<u8*>(unwind_info) - code.getCode<u8*>());
 
     impl = std::make_unique<Impl>(rfuncs, code.getCode());
 }
 
 bool ExceptionHandler::SupportsFastMem() const {
-    return false;
+    return true;
 }
 
-} // namespace BackendX64
-} // namespace Dynarmic
+} // namespace Dynarmic::BackendX64
