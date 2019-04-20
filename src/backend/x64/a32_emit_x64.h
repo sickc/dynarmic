@@ -73,6 +73,8 @@ protected:
     void GenMemoryAccessors();
     template<typename T>
     void ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn);
+    template<typename T>
+    void WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn);
 
     const void* terminal_handler_pop_rsb_hint;
     const void* terminal_handler_fast_dispatch_hint = nullptr;

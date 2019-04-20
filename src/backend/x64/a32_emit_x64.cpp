@@ -862,8 +862,8 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
     reg_alloc.DefineValue(inst, result);
 }
 
-template <typename T>
-static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, const CodePtr callback_fn) {
+template<typename T>
+void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
     auto args = reg_alloc.GetArgumentInfo(inst);
 
@@ -873,43 +873,94 @@ static void WriteMemory(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, 
 
     Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
     Xbyak::Reg64 value = code.ABI_PARAM3;
+    Xbyak::Reg64 tmp = reg_alloc.ScratchGpr();
+
+    const auto page_table_lookup = [this, vaddr, value, tmp, callback_fn](Xbyak::Label& end) {
+        Xbyak::Label abort;
+        code.mov(rax, reinterpret_cast<u64>(config.page_table));
+        code.mov(tmp.cvt32(), vaddr);
+        code.shr(tmp.cvt32(), 12);
+        code.mov(rax, qword[rax + tmp * 8]);
+        code.test(rax, rax);
+        code.jz(abort);
+        code.and_(vaddr, 4095);
+        switch (bit_size) {
+        case 8:
+            code.mov(code.byte[rax + vaddr.cvt64()], value.cvt8());
+            break;
+        case 16:
+            code.mov(word[rax + vaddr.cvt64()], value.cvt16());
+            break;
+        case 32:
+            code.mov(dword[rax + vaddr.cvt64()], value.cvt32());
+            break;
+        case 64:
+            code.mov(qword[rax + vaddr.cvt64()], value.cvt64());
+            break;
+        default:
+            ASSERT_MSG(false, "Invalid bit_size");
+            break;
+        }
+        code.jmp(end);
+        code.L(abort);
+        code.call(callback_fn);
+    };
+
+    if (ShouldFastMem()) {
+        const CodePtr patch_location = code.getCurr();
+        switch (bit_size) {
+        case 8:
+            code.mov(code.byte[r14 + vaddr.cvt64()], value.cvt8());
+            break;
+        case 16:
+            code.mov(word[r14 + vaddr.cvt64()], value.cvt16());
+            break;
+        case 32:
+            code.mov(dword[r14 + vaddr.cvt64()], value.cvt32());
+            break;
+        case 64:
+            code.mov(qword[r14 + vaddr.cvt64()], value.cvt64());
+            break;
+        default:
+            ASSERT_MSG(false, "Invalid bit_size");
+            break;
+        }
+        code.EnsurePatchLocationSize(patch_location, 5);
+
+        fastmem_patch_info.emplace(
+            reinterpret_cast<u64>(patch_location),
+            FastMemPatchInfo{
+                [this, patch_location, page_table_lookup, callback_fn]{
+                    Xbyak::Label far, end;
+
+                    const CodePtr save_code_ptr = code.getCurr();
+                    code.SetCodePtr(patch_location);
+                    code.jmp(far, code.T_NEAR);
+                    code.L(end);
+                    code.EnsurePatchLocationSize(patch_location, 5);
+                    code.SetCodePtr(save_code_ptr);
+
+                    code.SwitchToFarCode();
+                    code.L(far);
+                    if (config.page_table) {
+                        page_table_lookup(end);
+                    } else {
+                        code.call(callback_fn);
+                    }
+                    code.jmp(end);
+                    code.SwitchToNearCode();
+                }
+            });
+        return;
+    }
 
     if (!config.page_table) {
         code.call(callback_fn);
         return;
     }
 
-    Xbyak::Reg64 tmp = reg_alloc.ScratchGpr();
-
-    Xbyak::Label abort, end;
-
-    code.mov(rax, reinterpret_cast<u64>(config.page_table));
-    code.mov(tmp.cvt32(), vaddr);
-    code.shr(tmp.cvt32(), 12);
-    code.mov(rax, qword[rax + tmp * 8]);
-    code.test(rax, rax);
-    code.jz(abort);
-    code.and_(vaddr, 4095);
-    switch (bit_size) {
-    case 8:
-        code.mov(code.byte[rax + vaddr.cvt64()], value.cvt8());
-        break;
-    case 16:
-        code.mov(word[rax + vaddr.cvt64()], value.cvt16());
-        break;
-    case 32:
-        code.mov(dword[rax + vaddr.cvt64()], value.cvt32());
-        break;
-    case 64:
-        code.mov(qword[rax + vaddr.cvt64()], value.cvt64());
-        break;
-    default:
-        ASSERT_MSG(false, "Invalid bit_size");
-        break;
-    }
-    code.jmp(end);
-    code.L(abort);
-    code.call(callback_fn);
+    Xbyak::Label end;
+    page_table_lookup(end);
     code.L(end);
 }
 
@@ -930,19 +981,19 @@ void A32EmitX64::EmitA32ReadMemory64(A32EmitContext& ctx, IR::Inst* inst) {
 }
 
 void A32EmitX64::EmitA32WriteMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u8>(code, ctx.reg_alloc, inst, config, write_memory_8);
+    WriteMemory<u8>(ctx.reg_alloc, inst, write_memory_8);
 }
 
 void A32EmitX64::EmitA32WriteMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u16>(code, ctx.reg_alloc, inst, config, write_memory_16);
+    WriteMemory<u16>(ctx.reg_alloc, inst, write_memory_16);
 }
 
 void A32EmitX64::EmitA32WriteMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u32>(code, ctx.reg_alloc, inst, config, write_memory_32);
+    WriteMemory<u32>(ctx.reg_alloc, inst, write_memory_32);
 }
 
 void A32EmitX64::EmitA32WriteMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u64>(code, ctx.reg_alloc, inst, config, write_memory_64);
+    WriteMemory<u64>(ctx.reg_alloc, inst, write_memory_64);
 }
 
 template <typename T, void (A32::UserCallbacks::*fn)(A32::VAddr, T)>
