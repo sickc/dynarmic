@@ -765,8 +765,9 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
     const Xbyak::Reg64 tmp = code.ABI_RETURN;
 
     const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](Xbyak::Label& end) {
-        Xbyak::Label abort;
+        constexpr size_t bit_size = Common::BitSize<T>();
 
+        Xbyak::Label abort;
         code.mov(result, reinterpret_cast<u64>(config.page_table));
         code.mov(tmp.cvt32(), vaddr);
         code.shr(tmp.cvt32(), 12);
@@ -876,6 +877,8 @@ void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr 
     Xbyak::Reg64 tmp = reg_alloc.ScratchGpr();
 
     const auto page_table_lookup = [this, vaddr, value, tmp, callback_fn](Xbyak::Label& end) {
+        constexpr size_t bit_size = Common::BitSize<T>();
+
         Xbyak::Label abort;
         code.mov(rax, reinterpret_cast<u64>(config.page_table));
         code.mov(tmp.cvt32(), vaddr);
