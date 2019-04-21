@@ -784,7 +784,7 @@ void A32EmitX64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
 
     const auto do_not_fastmem_marker = GenerateDoNotFastmemMarker(ctx, inst);
 
-    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn, do_not_fastmem_marker](Xbyak::Label& end) {
+    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](Xbyak::Label& end) {
         constexpr size_t bit_size = Common::BitSize<T>();
 
         Xbyak::Label abort;
@@ -900,7 +900,7 @@ void A32EmitX64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
 
     const auto do_not_fastmem_marker = GenerateDoNotFastmemMarker(ctx, inst);
 
-    const auto page_table_lookup = [this, vaddr, value, tmp, callback_fn, do_not_fastmem_marker](Xbyak::Label& end) {
+    const auto page_table_lookup = [this, vaddr, value, tmp, callback_fn](Xbyak::Label& end) {
         constexpr size_t bit_size = Common::BitSize<T>();
 
         Xbyak::Label abort;

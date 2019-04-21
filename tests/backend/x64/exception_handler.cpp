@@ -52,7 +52,7 @@ TEST_CASE("Exception handler callback works", "[backend/x64]") {
     ExceptionHandler exception_handler;
     exception_handler.Register(code, std::make_unique<SimpleCallback>(static_cast<void(*)(X64State&)>(cb)));
 
-    if (!exception_handler.SupportsFastMem()) {
+    if (!exception_handler.SupportsFastmem()) {
         fmt::print(stderr, "WARNING: Exception callbacks not supported!\n");
         return;
     }
