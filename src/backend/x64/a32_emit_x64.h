@@ -9,6 +9,8 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <set>
+#include <tuple>
 #include <unordered_map>
 
 #include "backend/x64/a32_jitstate.h"
@@ -29,6 +31,7 @@ struct A32EmitContext final : public EmitContext {
     A32EmitContext(RegAlloc& reg_alloc, IR::Block& block);
     A32::LocationDescriptor Location() const;
     FP::FPCR FPCR() const override;
+    std::ptrdiff_t GetInstOffset(IR::Inst* inst) const;
 };
 
 class A32EmitX64 final : public EmitX64 {
@@ -62,6 +65,12 @@ protected:
     std::array<FastDispatchEntry, fast_dispatch_table_size> fast_dispatch_table;
     void ClearFastDispatchTable();
 
+    using DoNotFastmemMarker = std::tuple<IR::LocationDescriptor, std::ptrdiff_t>;
+    std::set<DoNotFastmemMarker> do_not_fastmem;
+    DoNotFastmemMarker GenerateDoNotFastmemMarker(A32EmitContext& ctx, IR::Inst* inst);
+    void DoNotFastmem(const DoNotFastmemMarker& marker);
+    bool ShouldFastmem(const DoNotFastmemMarker& marker) const;
+
     const void* read_memory_8;
     const void* read_memory_16;
     const void* read_memory_32;
@@ -72,9 +81,9 @@ protected:
     const void* write_memory_64;
     void GenMemoryAccessors();
     template<typename T>
-    void ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn);
+    void ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr callback_fn);
     template<typename T>
-    void WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn);
+    void WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr callback_fn);
 
     const void* terminal_handler_pop_rsb_hint;
     const void* terminal_handler_fast_dispatch_hint = nullptr;
@@ -93,12 +102,11 @@ protected:
     std::string LocationDescriptorToFriendlyName(const IR::LocationDescriptor&) const override;
 
     // Fastmem
-    struct FastMemPatchInfo {
+    struct FastmemPatchInfo {
         std::function<void()> callback;
     };
-    std::unordered_map<u64, FastMemPatchInfo> fastmem_patch_info;
-    bool ShouldFastMem() const;
-    void FastMemCallback(X64State& ts);
+    std::unordered_map<u64, FastmemPatchInfo> fastmem_patch_info;
+    void FastmemCallback(X64State& ts);
 
     // Terminal instruction emitters
     void EmitTerminalImpl(IR::Term::Interpret terminal, IR::LocationDescriptor initial_location) override;

@@ -250,7 +250,7 @@ void ExceptionHandler::Register(BlockOfCode& code, std::unique_ptr<Callback> cb)
     impl = std::make_unique<Impl>(code, std::move(cb));
 }
 
-bool ExceptionHandler::SupportsFastMem() const {
+bool ExceptionHandler::SupportsFastmem() const {
     return static_cast<bool>(impl);
 }
 

@@ -32,7 +32,7 @@ public:
 
     void Register(BlockOfCode& code, std::unique_ptr<Callback> segv_callback = nullptr);
 
-    bool SupportsFastMem() const;
+    bool SupportsFastmem() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

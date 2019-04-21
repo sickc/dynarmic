@@ -18,7 +18,7 @@ void ExceptionHandler::Register(BlockOfCode&, std::unique_ptr<Callback>) {
     // Do nothing
 }
 
-bool ExceptionHandler::SupportsFastMem() const {
+bool ExceptionHandler::SupportsFastmem() const {
     return false;
 }
 

@@ -4,6 +4,7 @@
  * General Public License version 2 or any later version.
  */
 
+#include <iterator>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -65,9 +66,13 @@ FP::FPCR A32EmitContext::FPCR() const {
     return FP::FPCR{Location().FPSCR().Value()};
 }
 
+std::ptrdiff_t A32EmitContext::GetInstOffset(IR::Inst* inst) const {
+    return std::distance(block.begin(), IR::Block::iterator(inst));
+}
+
 A32EmitX64::A32EmitX64(BlockOfCode& code, A32::UserConfig config, A32::Jit* jit_interface)
         : EmitX64(code), config(std::move(config)), jit_interface(jit_interface) {
-    exception_handler.Register(code, std::make_unique<ArgCallback>(Devirtualize<&A32EmitX64::FastMemCallback>(this)));
+    exception_handler.Register(code, std::make_unique<ArgCallback>(Devirtualize<&A32EmitX64::FastmemCallback>(this)));
     GenMemoryAccessors();
     GenTerminalHandlers();
     code.PreludeComplete();
@@ -752,19 +757,34 @@ void A32EmitX64::EmitA32SetExclusive(A32EmitContext& ctx, IR::Inst* inst) {
     code.mov(dword[r15 + offsetof(A32JitState, exclusive_address)], address);
 }
 
+A32EmitX64::DoNotFastmemMarker A32EmitX64::GenerateDoNotFastmemMarker(A32EmitContext& ctx, IR::Inst* inst) {
+    return std::make_tuple(ctx.Location(), ctx.GetInstOffset(inst));
+}
+
+bool A32EmitX64::ShouldFastmem(const DoNotFastmemMarker& marker) const {
+    return config.fastmem_pointer && exception_handler.SupportsFastmem() && do_not_fastmem.count(marker) == 0;
+}
+
+void A32EmitX64::DoNotFastmem(const DoNotFastmemMarker& marker) {
+    do_not_fastmem.emplace(marker);
+    InvalidateBasicBlocks({std::get<0>(marker)});
+}
+
 template <typename T>
-void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn) {
+void A32EmitX64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
-    auto args = reg_alloc.GetArgumentInfo(inst);
+    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
-    reg_alloc.UseScratch(args[0], ABI_PARAM2);
-    reg_alloc.ScratchGpr({ABI_RETURN});
+    ctx.reg_alloc.UseScratch(args[0], ABI_PARAM2);
+    ctx.reg_alloc.ScratchGpr({ABI_RETURN});
 
-    const Xbyak::Reg64 result = reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 result = ctx.reg_alloc.ScratchGpr();
     const Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
     const Xbyak::Reg64 tmp = code.ABI_RETURN;
 
-    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](Xbyak::Label& end) {
+    const auto do_not_fastmem_marker = GenerateDoNotFastmemMarker(ctx, inst);
+
+    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn, do_not_fastmem_marker](Xbyak::Label& end) {
         constexpr size_t bit_size = Common::BitSize<T>();
 
         Xbyak::Label abort;
@@ -798,7 +818,7 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
         code.mov(result, code.ABI_RETURN);
     };
 
-    if (ShouldFastMem()) {
+    if (ShouldFastmem(do_not_fastmem_marker)) {
         const CodePtr patch_location = code.getCurr();
         switch (bit_size) {
         case 8:
@@ -821,8 +841,8 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
 
         fastmem_patch_info.emplace(
             reinterpret_cast<u64>(patch_location),
-            FastMemPatchInfo{
-                [this, patch_location, page_table_lookup, callback_fn, result]{
+            FastmemPatchInfo{
+                [this, patch_location, page_table_lookup, callback_fn, result, do_not_fastmem_marker]{
                     Xbyak::Label thunk, end;
 
                     const CodePtr save_code_ptr = code.getCurr();
@@ -842,17 +862,19 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
                     }
                     code.jmp(end);
                     code.SwitchToNearCode();
+
+                    DoNotFastmem(do_not_fastmem_marker);
                 }
             });
 
-        reg_alloc.DefineValue(inst, result);
+        ctx.reg_alloc.DefineValue(inst, result);
         return;
     }
 
     if (!config.page_table) {
         code.call(callback_fn);
         code.mov(result, code.ABI_RETURN);
-        reg_alloc.DefineValue(inst, result);
+        ctx.reg_alloc.DefineValue(inst, result);
         return;
     }
 
@@ -860,23 +882,25 @@ void A32EmitX64::ReadMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr c
     page_table_lookup(end);
     code.L(end);
 
-    reg_alloc.DefineValue(inst, result);
+    ctx.reg_alloc.DefineValue(inst, result);
 }
 
 template<typename T>
-void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr callback_fn) {
+void A32EmitX64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
-    auto args = reg_alloc.GetArgumentInfo(inst);
+    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
-    reg_alloc.ScratchGpr({ABI_RETURN});
-    reg_alloc.UseScratch(args[0], ABI_PARAM2);
-    reg_alloc.UseScratch(args[1], ABI_PARAM3);
+    ctx.reg_alloc.ScratchGpr({ABI_RETURN});
+    ctx.reg_alloc.UseScratch(args[0], ABI_PARAM2);
+    ctx.reg_alloc.UseScratch(args[1], ABI_PARAM3);
 
     Xbyak::Reg32 vaddr = code.ABI_PARAM2.cvt32();
     Xbyak::Reg64 value = code.ABI_PARAM3;
-    Xbyak::Reg64 tmp = reg_alloc.ScratchGpr();
+    Xbyak::Reg64 tmp = ctx.reg_alloc.ScratchGpr();
 
-    const auto page_table_lookup = [this, vaddr, value, tmp, callback_fn](Xbyak::Label& end) {
+    const auto do_not_fastmem_marker = GenerateDoNotFastmemMarker(ctx, inst);
+
+    const auto page_table_lookup = [this, vaddr, value, tmp, callback_fn, do_not_fastmem_marker](Xbyak::Label& end) {
         constexpr size_t bit_size = Common::BitSize<T>();
 
         Xbyak::Label abort;
@@ -909,7 +933,7 @@ void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr 
         code.call(callback_fn);
     };
 
-    if (ShouldFastMem()) {
+    if (ShouldFastmem(do_not_fastmem_marker)) {
         const CodePtr patch_location = code.getCurr();
         switch (bit_size) {
         case 8:
@@ -932,8 +956,8 @@ void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr 
 
         fastmem_patch_info.emplace(
             reinterpret_cast<u64>(patch_location),
-            FastMemPatchInfo{
-                [this, patch_location, page_table_lookup, callback_fn]{
+            FastmemPatchInfo{
+                [this, patch_location, page_table_lookup, callback_fn, do_not_fastmem_marker]{
                     Xbyak::Label thunk, end;
 
                     const CodePtr save_code_ptr = code.getCurr();
@@ -952,6 +976,8 @@ void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr 
                     }
                     code.jmp(end);
                     code.SwitchToNearCode();
+
+                    DoNotFastmem(do_not_fastmem_marker);
                 }
             });
         return;
@@ -968,35 +994,35 @@ void A32EmitX64::WriteMemory(RegAlloc& reg_alloc, IR::Inst* inst, const CodePtr 
 }
 
 void A32EmitX64::EmitA32ReadMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u8>(ctx.reg_alloc, inst, read_memory_8);
+    ReadMemory<u8>(ctx, inst, read_memory_8);
 }
 
 void A32EmitX64::EmitA32ReadMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u16>(ctx.reg_alloc, inst, read_memory_16);
+    ReadMemory<u16>(ctx, inst, read_memory_16);
 }
 
 void A32EmitX64::EmitA32ReadMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u32>(ctx.reg_alloc, inst, read_memory_32);
+    ReadMemory<u32>(ctx, inst, read_memory_32);
 }
 
 void A32EmitX64::EmitA32ReadMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    ReadMemory<u64>(ctx.reg_alloc, inst, read_memory_64);
+    ReadMemory<u64>(ctx, inst, read_memory_64);
 }
 
 void A32EmitX64::EmitA32WriteMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u8>(ctx.reg_alloc, inst, write_memory_8);
+    WriteMemory<u8>(ctx, inst, write_memory_8);
 }
 
 void A32EmitX64::EmitA32WriteMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u16>(ctx.reg_alloc, inst, write_memory_16);
+    WriteMemory<u16>(ctx, inst, write_memory_16);
 }
 
 void A32EmitX64::EmitA32WriteMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u32>(ctx.reg_alloc, inst, write_memory_32);
+    WriteMemory<u32>(ctx, inst, write_memory_32);
 }
 
 void A32EmitX64::EmitA32WriteMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    WriteMemory<u64>(ctx.reg_alloc, inst, write_memory_64);
+    WriteMemory<u64>(ctx, inst, write_memory_64);
 }
 
 template <typename T, void (A32::UserCallbacks::*fn)(A32::VAddr, T)>
@@ -1329,11 +1355,7 @@ std::string A32EmitX64::LocationDescriptorToFriendlyName(const IR::LocationDescr
                        descriptor.FPSCR().Value());
 }
 
-bool A32EmitX64::ShouldFastMem() const {
-    return config.fastmem_pointer && exception_handler.SupportsFastMem();
-}
-
-void A32EmitX64::FastMemCallback(X64State& ts) {
+void A32EmitX64::FastmemCallback(X64State& ts) {
     const auto iter = fastmem_patch_info.find(ts.rip);
     ASSERT(iter != fastmem_patch_info.end());
     iter->second.callback();

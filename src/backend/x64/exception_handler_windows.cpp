@@ -275,7 +275,7 @@ void ExceptionHandler::Register(BlockOfCode& code, std::unique_ptr<Callback> cb)
     impl = std::make_unique<Impl>(rfuncs, code.getCode());
 }
 
-bool ExceptionHandler::SupportsFastMem() const {
+bool ExceptionHandler::SupportsFastmem() const {
     return true;
 }
 
