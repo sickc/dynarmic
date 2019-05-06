@@ -16,6 +16,10 @@ class ITState final {
 public:
     ITState() = default;
     explicit ITState(u8 data) : value(data) {}
+    ITState(IR::Cond cond, u8 mask) {
+        Cond(cond);
+        Mask(mask);
+    }
 
     ITState& operator=(u8 data) {
         value = data;
@@ -45,12 +49,25 @@ public:
     }
 
     ITState Advance() const {
-        ITState result{*this};
-        result.Mask(result.Mask() << 1);
-        if (result.Mask() == 0) {
-            return ITState{0};
+        // Advance advances the IT state to the next row of the below table
+        //
+        // Instructions
+        // Left in Block   value[7:5] [4] [3] [2] [1] [0]
+        //
+        //      4          cond_base   x   x   x   x   1
+        //      3          cond_base   x   x   x   1   0
+        //      2          cond_base   x   x   1   0   0
+        //      1          cond_base   x   1   0   0   0
+        //      0             000      0   0   0   0   0
+        //
+        //
+        // NOTE: cond_base is the upper 3 bits of cond!
+        //       In other words, cond == cond_base:value[4].
+        //
+        if (!IsInITBlock() || IsLastInITBlock()) {
+            return ITState{};
         }
-        return result;
+        return ITState{Common::ModifyBits<0, 4>(value, static_cast<u8>(value << 1))};
     }
 
     u8 Value() const {
@@ -58,7 +75,7 @@ public:
     }
 
 private:
-    u8 value;
+    u8 value = 0;
 };
 
 inline bool operator==(ITState lhs, ITState rhs) {
