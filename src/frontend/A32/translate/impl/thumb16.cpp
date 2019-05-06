@@ -875,9 +875,17 @@ bool ThumbTranslatorVisitor::thumb16_UDF() {
 
 // IT{x}{y}{z} {cond}
 bool ThumbTranslatorVisitor::thumb16_IT(Cond cond, Imm<4> mask) {
-    (void)cond;
-    (void)mask;
-    return InterpretThisInstruction();
+    ASSERT(mask != 0b0000);
+    if (cond == Cond::NV || (cond == Cond::AL && Common::BitCount(mask.ZeroExtend()) != 1)) {
+        return UnpredictableInstruction();
+    }
+    if (InITBlock()) {
+        return UnpredictableInstruction();
+    }
+
+    const ITState new_it{cond, mask.ZeroExtend<u8>()};
+    ir.SetTerm(IR::Term::LinkBlockFast{ir.current_location.AdvancePC(2).SetIT(new_it)});
+    return false;
 }
 
 // BX <Rm>

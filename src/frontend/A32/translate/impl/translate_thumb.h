@@ -26,6 +26,10 @@ struct ThumbTranslatorVisitor final : public CommonTranslatorVisitor {
     bool StepWithThumb16Instruction(u16 thumb16_instruction);
     bool StepWithThumb32Instruction(u32 thumb32_instruction);
 
+    bool InITBlock() const {
+        return ir.current_location.IT().IsInITBlock();
+    }
+
     // thumb16
     bool thumb16_LSL_imm(Imm<5> imm5, Reg m, Reg d);
     bool thumb16_LSR_imm(Imm<5> imm5, Reg m, Reg d);
