@@ -113,6 +113,9 @@ std::optional<std::reference_wrapper<const Thumb16Matcher<V>>> DecodeThumb16(u16
         INST(&V::thumb16_STMIA,          "STMIA",                    "11000nnnxxxxxxxx"),
         INST(&V::thumb16_LDMIA,          "LDMIA",                    "11001nnnxxxxxxxx"),
 
+        // If-Then
+        INST(&V::thumb16_IT,             "IT",                       "10111111ccccxxxx"),
+
         // Branch instructions
         INST(&V::thumb16_BX,             "BX",                       "010001110mmmm000"), // v4T
         INST(&V::thumb16_BLX_reg,        "BLX (reg)",                "010001111mmmm000"), // v5T

@@ -329,6 +329,19 @@ public:
         return fmt::format("ldm {}{}, {{{}}}", n, write_back ? "!" : "", RegListToString(reg_list));
     }
 
+    std::string thumb16_IT(Cond cond, Imm<4> mask) {
+        const bool firstcond0 = Common::Bit<0>(static_cast<size_t>(cond));
+        const size_t xyz_count = 3 - Common::LowestSetBit(mask.ZeroExtend());
+
+        std::array<const char*, 3> xyz{"", "", ""};
+        for (size_t i = 0; i < xyz_count; i++) {
+            const bool mask_bit = Common::Bit(3 - i, mask.ZeroExtend());
+            xyz[i] = (mask_bit == firstcond0) ? "t" : "e";
+        }
+
+        return fmt::format("it{}{}{} {}", xyz[0], xyz[1], xyz[2], CondToString(cond));
+    }
+
     std::string thumb16_BX(Reg m) {
         return fmt::format("bx {}", m);
     }

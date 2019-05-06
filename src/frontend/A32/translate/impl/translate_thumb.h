@@ -100,6 +100,7 @@ struct ThumbTranslatorVisitor final : public CommonTranslatorVisitor {
     bool thumb16_LDMIA(Reg n, RegList reg_list);
     bool thumb16_CBZ_CBNZ(bool nonzero, Imm<1> i, Imm<5> imm5, Reg n);
     bool thumb16_UDF();
+    bool thumb16_IT(Cond cond, Imm<4> mask);
     bool thumb16_BX(Reg m);
     bool thumb16_BLX_reg(Reg m);
     bool thumb16_SVC(Imm<8> imm8);

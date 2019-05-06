@@ -873,6 +873,13 @@ bool ThumbTranslatorVisitor::thumb16_UDF() {
     return InterpretThisInstruction();
 }
 
+// IT{x}{y}{z} {cond}
+bool ThumbTranslatorVisitor::thumb16_IT(Cond cond, Imm<4> mask) {
+    (void)cond;
+    (void)mask;
+    return InterpretThisInstruction();
+}
+
 // BX <Rm>
 bool ThumbTranslatorVisitor::thumb16_BX(Reg m) {
     ir.BXWritePC(ir.GetRegister(m));
