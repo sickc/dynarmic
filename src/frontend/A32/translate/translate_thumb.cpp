@@ -86,6 +86,15 @@ ThumbTranslatorVisitor::ThumbTranslatorVisitor(IR::Block& block, LocationDescrip
     ASSERT_MSG(descriptor.TFlag(), "The processor must be in Thumb mode");
 }
 
+Cond ThumbTranslatorVisitor::CurrentCond() {
+    const auto it_state = ir.current_location.IT();
+    return it_state.Value() == 0 ? Cond::AL : it_state.Cond();
+}
+
+bool ThumbTranslatorVisitor::ConditionPassed() {
+    return CommonTranslatorVisitor::ConditionPassed(CurrentCond());
+}
+
 bool ThumbTranslatorVisitor::Step(MemoryReadCodeFuncType memory_read_code) {
     const u32 arm_pc = ir.current_location.PC();
     const auto [thumb_instruction, inst_size] = ReadThumbInstruction(arm_pc, memory_read_code);

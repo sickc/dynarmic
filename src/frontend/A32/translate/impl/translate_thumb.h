@@ -22,6 +22,8 @@ struct ThumbTranslatorVisitor final : public CommonTranslatorVisitor {
 
     ThumbTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options);
 
+    Cond CurrentCond();
+    bool ConditionPassed();
     bool Step(MemoryReadCodeFuncType memory_read_code) override;
     bool StepWithThumb16Instruction(u16 thumb16_instruction);
     bool StepWithThumb32Instruction(u32 thumb32_instruction);
