@@ -10,25 +10,21 @@
 #include "frontend/imm.h"
 #include "frontend/A32/ir_emitter.h"
 #include "frontend/A32/location_descriptor.h"
+#include "frontend/A32/translate/impl/translate_common.h"
 #include "frontend/A32/translate/translate.h"
 
 namespace Dynarmic::A32 {
 
 enum class Exception;
 
-struct ThumbTranslatorVisitor final {
+struct ThumbTranslatorVisitor final : public CommonTranslatorVisitor {
     using instruction_return_type = bool;
 
-    explicit ThumbTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options) : ir(block, descriptor), options(options) {
-        ASSERT_MSG(descriptor.TFlag(), "The processor must be in Thumb mode");
-    }
+    ThumbTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options);
 
-    A32::IREmitter ir;
-    TranslationOptions options;
-
-    bool InterpretThisInstruction();
-    bool UnpredictableInstruction();
-    bool RaiseException(Exception exception);
+    bool Step(MemoryReadCodeFuncType memory_read_code) override;
+    bool StepWithThumb16Instruction(u16 thumb16_instruction);
+    bool StepWithThumb32Instruction(u32 thumb32_instruction);
 
     // thumb16
     bool thumb16_LSL_imm(Imm<5> imm5, Reg m, Reg d);

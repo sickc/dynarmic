@@ -59,79 +59,61 @@ std::tuple<u32, ThumbInstSize> ReadThumbInstruction(u32 arm_pc, MemoryReadCodeFu
 IR::Block TranslateThumb(LocationDescriptor descriptor, MemoryReadCodeFuncType memory_read_code, const TranslationOptions& options) {
     IR::Block block{descriptor};
     ThumbTranslatorVisitor visitor{block, descriptor, options};
-
-    bool should_continue = true;
-    while (should_continue) {
-        const u32 arm_pc = visitor.ir.current_location.PC();
-        const auto [thumb_instruction, inst_size] = ReadThumbInstruction(arm_pc, memory_read_code);
-
-        if (inst_size == ThumbInstSize::Thumb16) {
-            if (const auto decoder = DecodeThumb16<ThumbTranslatorVisitor>(static_cast<u16>(thumb_instruction))) {
-                should_continue = decoder->get().call(visitor, static_cast<u16>(thumb_instruction));
-            } else {
-                should_continue = visitor.thumb16_UDF();
-            }
-        } else {
-            if (const auto decoder = DecodeThumb32<ThumbTranslatorVisitor>(thumb_instruction)) {
-                should_continue = decoder->get().call(visitor, thumb_instruction);
-            } else {
-                should_continue = visitor.thumb32_UDF();
-            }
-        }
-
-        const s32 advance_pc = (inst_size == ThumbInstSize::Thumb16) ? 2 : 4;
-        visitor.ir.current_location = visitor.ir.current_location.AdvancePC(advance_pc);
-        block.CycleCount()++;
-    }
-
-    block.SetEndLocation(visitor.ir.current_location);
-
+    visitor.Translate(memory_read_code);
     return block;
 }
 
 bool TranslateSingleThumbInstruction(IR::Block& block, LocationDescriptor descriptor, u32 thumb_instruction) {
     ThumbTranslatorVisitor visitor{block, descriptor, {}};
 
-    const bool is_thumb_16 = IsThumb16(static_cast<u16>(thumb_instruction));
+    const bool is_thumb_16 = (thumb_instruction >> 16) == 0;
     bool should_continue = true;
     if (is_thumb_16) {
-        if (const auto decoder = DecodeThumb16<ThumbTranslatorVisitor>(static_cast<u16>(thumb_instruction))) {
-            should_continue = decoder->get().call(visitor, static_cast<u16>(thumb_instruction));
-        } else {
-            should_continue = visitor.thumb16_UDF();
-        }
+        ASSERT(IsThumb16(static_cast<u16>(thumb_instruction)));
+        should_continue = visitor.StepWithThumb16Instruction(static_cast<u16>(thumb_instruction));
     } else {
-        if (const auto decoder = DecodeThumb32<ThumbTranslatorVisitor>(thumb_instruction)) {
-            should_continue = decoder->get().call(visitor, thumb_instruction);
-        } else {
-            should_continue = visitor.thumb32_UDF();
-        }
+        ASSERT(!IsThumb16(static_cast<u16>(thumb_instruction >> 16)));
+        should_continue = visitor.StepWithThumb32Instruction(thumb_instruction);
     }
 
-    const s32 advance_pc = is_thumb_16 ? 2 : 4;
-    visitor.ir.current_location = visitor.ir.current_location.AdvancePC(advance_pc);
     block.CycleCount()++;
-
-    block.SetEndLocation(visitor.ir.current_location);
+    block.SetEndLocation(visitor.AdvanceLocationDescriptor());
 
     return should_continue;
 }
 
-bool ThumbTranslatorVisitor::InterpretThisInstruction() {
-    ir.SetTerm(IR::Term::Interpret(ir.current_location));
-    return false;
+ThumbTranslatorVisitor::ThumbTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options) : CommonTranslatorVisitor(block, descriptor, options) {
+    ASSERT_MSG(descriptor.TFlag(), "The processor must be in Thumb mode");
 }
 
-bool ThumbTranslatorVisitor::UnpredictableInstruction() {
-    ASSERT_MSG(false, "UNPREDICTABLE");
-    return false;
+bool ThumbTranslatorVisitor::Step(MemoryReadCodeFuncType memory_read_code) {
+    const u32 arm_pc = ir.current_location.PC();
+    const auto [thumb_instruction, inst_size] = ReadThumbInstruction(arm_pc, memory_read_code);
+
+    if (inst_size == ThumbInstSize::Thumb16) {
+        return StepWithThumb16Instruction(static_cast<u16>(thumb_instruction));
+    }
+    return StepWithThumb32Instruction(thumb_instruction);
 }
 
-bool ThumbTranslatorVisitor::RaiseException(Exception exception) {
-    ir.BranchWritePC(ir.Imm32(ir.current_location.PC() + 2));
-    ir.ExceptionRaised(exception);
-    ir.SetTerm(IR::Term::CheckHalt{IR::Term::ReturnToDispatch{}});
-    return false;
+bool ThumbTranslatorVisitor::StepWithThumb16Instruction(u16 thumb16_instruction) {
+    current_instruction_size = 2;
+
+    if (const auto decoder = DecodeThumb16<ThumbTranslatorVisitor>(thumb16_instruction)) {
+        return decoder->get().call(*this, thumb16_instruction);
+    }
+
+    return UndefinedInstruction();
+}
+
+bool ThumbTranslatorVisitor::StepWithThumb32Instruction(u32 thumb32_instruction) {
+    current_instruction_size = 4;
+
+    if (const auto decoder = DecodeThumb32<ThumbTranslatorVisitor>(thumb32_instruction)) {
+        return decoder->get().call(*this, thumb32_instruction);
+    }
+
+    return UndefinedInstruction();
 }
 
 } // namepsace Dynarmic::A32

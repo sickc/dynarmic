@@ -115,11 +115,13 @@ add_library(dynarmic
     frontend/A32/translate/impl/thumb16.cpp
     frontend/A32/translate/impl/thumb32.cpp
     frontend/A32/translate/impl/translate_arm.h
+    frontend/A32/translate/impl/translate_common.h
     frontend/A32/translate/impl/translate_thumb.h
     frontend/A32/translate/impl/vfp.cpp
     frontend/A32/translate/translate.cpp
     frontend/A32/translate/translate.h
     frontend/A32/translate/translate_arm.cpp
+    frontend/A32/translate/translate_common.cpp
     frontend/A32/translate/translate_thumb.cpp
     frontend/A32/types.cpp
     frontend/A32/types.h

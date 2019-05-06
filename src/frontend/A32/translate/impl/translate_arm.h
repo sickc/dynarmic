@@ -10,39 +10,21 @@
 #include "frontend/imm.h"
 #include "frontend/A32/ir_emitter.h"
 #include "frontend/A32/location_descriptor.h"
+#include "frontend/A32/translate/impl/translate_common.h"
 #include "frontend/A32/translate/translate.h"
 
 namespace Dynarmic::A32 {
 
 enum class Exception;
 
-enum class ConditionalState {
-    /// We haven't met any conditional instructions yet.
-    None,
-    /// Current instruction is a conditional. This marks the end of this basic block.
-    Break,
-    /// This basic block is made up solely of conditional instructions.
-    Translating,
-    /// This basic block is made up of conditional instructions followed by unconditional instructions.
-    Trailing,
-};
-
-struct ArmTranslatorVisitor final {
+struct ArmTranslatorVisitor final : public CommonTranslatorVisitor {
     using instruction_return_type = bool;
 
-    explicit ArmTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options) : ir(block, descriptor), options(options) {
-        ASSERT_MSG(!descriptor.TFlag(), "The processor must be in Arm mode");
-    }
-
-    A32::IREmitter ir;
-    ConditionalState cond_state = ConditionalState::None;
-    TranslationOptions options;
+    ArmTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options);
 
     bool ConditionPassed(Cond cond);
-    bool InterpretThisInstruction();
-    bool UnpredictableInstruction();
-    bool UndefinedInstruction();
-    bool RaiseException(Exception exception);
+    bool Step(MemoryReadCodeFuncType memory_read_code) override;
+    bool StepWithArmInstruction(u32 arm_instruction);
 
     static u32 ArmExpandImm(int rotate, Imm<8> imm8) {
         return Common::RotateRight<u32>(imm8.ZeroExtend(), rotate * 2);

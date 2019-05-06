@@ -18,51 +18,10 @@
 
 namespace Dynarmic::A32 {
 
-static bool CondCanContinue(ConditionalState cond_state, const A32::IREmitter& ir) {
-    ASSERT_MSG(cond_state != ConditionalState::Break, "Should never happen.");
-
-    if (cond_state == ConditionalState::None)
-        return true;
-
-    // TODO: This is more conservative than necessary.
-    return std::all_of(ir.block.begin(), ir.block.end(), [](const IR::Inst& inst) { return !inst.WritesToCPSR(); });
-}
-
 IR::Block TranslateArm(LocationDescriptor descriptor, MemoryReadCodeFuncType memory_read_code, const TranslationOptions& options) {
     IR::Block block{descriptor};
     ArmTranslatorVisitor visitor{block, descriptor, options};
-
-    bool should_continue = true;
-    while (should_continue && CondCanContinue(visitor.cond_state, visitor.ir)) {
-        const u32 arm_pc = visitor.ir.current_location.PC();
-        const u32 arm_instruction = memory_read_code(arm_pc);
-
-        if (const auto vfp_decoder = DecodeVFP<ArmTranslatorVisitor>(arm_instruction)) {
-            should_continue = vfp_decoder->get().call(visitor, arm_instruction);
-        } else if (const auto decoder = DecodeArm<ArmTranslatorVisitor>(arm_instruction)) {
-            should_continue = decoder->get().call(visitor, arm_instruction);
-        } else {
-            should_continue = visitor.arm_UDF();
-        }
-
-        if (visitor.cond_state == ConditionalState::Break) {
-            break;
-        }
-
-        visitor.ir.current_location = visitor.ir.current_location.AdvancePC(4);
-        block.CycleCount()++;
-    }
-
-    if (visitor.cond_state == ConditionalState::Translating || visitor.cond_state == ConditionalState::Trailing) {
-        if (should_continue) {
-            visitor.ir.SetTerm(IR::Term::LinkBlockFast{visitor.ir.current_location});
-        }
-    }
-
-    ASSERT_MSG(block.HasTerminal(), "Terminal has not been set");
-
-    block.SetEndLocation(visitor.ir.current_location);
-
+    visitor.Translate(memory_read_code);
     return block;
 }
 
@@ -71,97 +30,46 @@ bool TranslateSingleArmInstruction(IR::Block& block, LocationDescriptor descript
 
     // TODO: Proper cond handling
 
-    bool should_continue = true;
-    if (const auto vfp_decoder = DecodeVFP<ArmTranslatorVisitor>(arm_instruction)) {
-        should_continue = vfp_decoder->get().call(visitor, arm_instruction);
-    } else if (const auto decoder = DecodeArm<ArmTranslatorVisitor>(arm_instruction)) {
-        should_continue = decoder->get().call(visitor, arm_instruction);
-    } else {
-        should_continue = visitor.arm_UDF();
-    }
+    const bool should_continue = visitor.StepWithArmInstruction(arm_instruction);
 
     // TODO: Feedback resulting cond status to caller somehow.
 
-    visitor.ir.current_location = visitor.ir.current_location.AdvancePC(4);
     block.CycleCount()++;
-
-    block.SetEndLocation(visitor.ir.current_location);
+    block.SetEndLocation(visitor.AdvanceLocationDescriptor());
 
     return should_continue;
 }
 
+ArmTranslatorVisitor::ArmTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options) : CommonTranslatorVisitor(block, descriptor, options) {
+    ASSERT_MSG(!descriptor.TFlag(), "The processor must be in Arm mode");
+}
+
 bool ArmTranslatorVisitor::ConditionPassed(Cond cond) {
-    ASSERT_MSG(cond_state != ConditionalState::Break,
-               "This should never happen. We requested a break but that wasn't honored.");
     if (cond == Cond::NV) {
         // NV conditional is obsolete
-        ir.ExceptionRaised(Exception::UnpredictableInstruction);
-        return false;
-    }
-
-    if (cond_state == ConditionalState::Translating) {
-        if (ir.block.ConditionFailedLocation() != ir.current_location || cond == Cond::AL) {
-            cond_state = ConditionalState::Trailing;
-        } else {
-            if (cond == ir.block.GetCondition()) {
-                ir.block.SetConditionFailedLocation(ir.current_location.AdvancePC(4));
-                ir.block.ConditionFailedCycleCount()++;
-                return true;
-            }
-
-            // cond has changed, abort
-            cond_state = ConditionalState::Break;
-            ir.SetTerm(IR::Term::LinkBlockFast{ir.current_location});
-            return false;
-        }
-    }
-
-    if (cond == Cond::AL) {
-        // Everything is fine with the world
-        return true;
-    }
-
-    // non-AL cond
-
-    if (!ir.block.empty()) {
-        // We've already emitted instructions. Quit for now, we'll make a new block here later.
         cond_state = ConditionalState::Break;
-        ir.SetTerm(IR::Term::LinkBlockFast{ir.current_location});
-        return false;
+        return UnpredictableInstruction();
+    }
+    return CommonTranslatorVisitor::ConditionPassed(cond);
+}
+
+bool ArmTranslatorVisitor::Step(MemoryReadCodeFuncType memory_read_code) {
+    const u32 arm_instruction = memory_read_code(ir.current_location.PC());
+    return StepWithArmInstruction(arm_instruction);
+}
+
+bool ArmTranslatorVisitor::StepWithArmInstruction(u32 arm_instruction) {
+    current_instruction_size = 4;
+
+    if (const auto vfp_decoder = DecodeVFP<ArmTranslatorVisitor>(arm_instruction)) {
+        return vfp_decoder->get().call(*this, arm_instruction);
     }
 
-    // We've not emitted instructions yet.
-    // We'll emit one instruction, and set the block-entry conditional appropriately.
+    if (const auto decoder = DecodeArm<ArmTranslatorVisitor>(arm_instruction)) {
+        return decoder->get().call(*this, arm_instruction);
+    }
 
-    cond_state = ConditionalState::Translating;
-    ir.block.SetCondition(cond);
-    ir.block.SetConditionFailedLocation(ir.current_location.AdvancePC(4));
-    ir.block.ConditionFailedCycleCount() = 1;
-    return true;
-}
-
-bool ArmTranslatorVisitor::InterpretThisInstruction() {
-    ir.SetTerm(IR::Term::Interpret(ir.current_location));
-    return false;
-}
-
-bool ArmTranslatorVisitor::UnpredictableInstruction() {
-    ir.ExceptionRaised(Exception::UnpredictableInstruction);
-    ir.SetTerm(IR::Term::CheckHalt{IR::Term::ReturnToDispatch{}});
-    return false;
-}
-
-bool ArmTranslatorVisitor::UndefinedInstruction() {
-    ir.ExceptionRaised(Exception::UndefinedInstruction);
-    ir.SetTerm(IR::Term::CheckHalt{IR::Term::ReturnToDispatch{}});
-    return false;
-}
-
-bool ArmTranslatorVisitor::RaiseException(Exception exception) {
-    ir.BranchWritePC(ir.Imm32(ir.current_location.PC() + 4));
-    ir.ExceptionRaised(exception);
-    ir.SetTerm(IR::Term::CheckHalt{IR::Term::ReturnToDispatch{}});
-    return false;
+    return UndefinedInstruction();
 }
 
 IR::ResultAndCarry<IR::U32> ArmTranslatorVisitor::EmitImmShift(IR::U32 value, ShiftType type, Imm<5> imm5, IR::U1 carry_in) {
