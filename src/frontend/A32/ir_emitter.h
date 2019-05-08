@@ -18,6 +18,7 @@
 
 namespace Dynarmic::A32 {
 
+enum class ArchVersion;
 enum class Exception;
 
 /**
@@ -27,12 +28,15 @@ enum class Exception;
  */
 class IREmitter : public IR::IREmitter {
 public:
-    explicit IREmitter(IR::Block& block, LocationDescriptor descriptor) : IR::IREmitter(block), current_location(descriptor) {}
+    explicit IREmitter(IR::Block& block, LocationDescriptor descriptor, ArchVersion arch_version) : IR::IREmitter(block), current_location(descriptor), arch_version(arch_version) {}
 
     LocationDescriptor current_location;
+    ArchVersion arch_version;
 
     u32 PC() const;
     u32 AlignPC(size_t alignment) const;
+    // @returns Major version number of architecture
+    size_t ArchMajorVersion() const;
 
     IR::U32 GetRegister(Reg source_reg);
     IR::U32U64 GetExtendedRegister(ExtReg source_reg);

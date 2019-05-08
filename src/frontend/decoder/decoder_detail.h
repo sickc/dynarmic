@@ -150,8 +150,8 @@ public:
      * Creates a matcher that can match and parse instructions based on bitstring.
      * See also: GetMaskAndExpect and GetArgInfo for format of bitstring.
      */
-    template<typename FnT>
-    static auto GetMatcher(FnT fn, const char* const name, const char* const bitstring) {
+    template<typename FnT, typename... ExtraArgs>
+    static auto GetMatcher(FnT fn, const char* const name, const char* const bitstring, ExtraArgs&&... extra_args) {
         constexpr size_t args_count = Common::mp::FunctionInfo<FnT>::args_count;
         using Iota = std::make_index_sequence<args_count>;
 
@@ -159,7 +159,7 @@ public:
         const auto [arg_masks, arg_shifts] = GetArgInfo<args_count>(bitstring);
         const auto proxy_fn = VisitorCaller<FnT>::Make(Iota(), fn, arg_masks, arg_shifts);
 
-        return MatcherT(name, mask, expect, proxy_fn);
+        return MatcherT(name, mask, expect, proxy_fn, std::forward<ExtraArgs>(extra_args)...);
     }
 };
 

@@ -26,7 +26,7 @@ enum class ConditionalState {
 };
 
 struct CommonTranslatorVisitor {
-    CommonTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options) : ir(block, descriptor), options(options) {}
+    CommonTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options);
 
     A32::IREmitter ir;
     TranslationOptions options;

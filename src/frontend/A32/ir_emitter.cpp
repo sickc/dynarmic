@@ -8,9 +8,34 @@
 #include "frontend/A32/ir_emitter.h"
 #include "frontend/ir/opcodes.h"
 
+#include <dynarmic/A32/arch_version.h>
+
 namespace Dynarmic::A32 {
 
 using Opcode = IR::Opcode;
+
+size_t IREmitter::ArchMajorVersion() const {
+    switch (arch_version) {
+    case ArchVersion::v4:
+    case ArchVersion::v4T:
+        return 4;
+    case ArchVersion::v5T:
+    case ArchVersion::v5TE:
+        return 5;
+    case ArchVersion::v6:
+    case ArchVersion::v6K:
+    case ArchVersion::v6T2:
+        return 6;
+    case ArchVersion::v7:
+        return 7;
+    case ArchVersion::v8:
+        return 8;
+    default:
+        break;
+    }
+    UNREACHABLE();
+    return 0;
+}
 
 u32 IREmitter::PC() const {
     const u32 offset = current_location.TFlag() ? 4 : 8;
@@ -57,9 +82,11 @@ void IREmitter::SetExtendedRegister(const ExtReg reg, const IR::U32U64& value) {
 }
 
 void IREmitter::ALUWritePC(const IR::U32& value) {
-    // This behaviour is ARM version-dependent.
-    // The below implementation is for ARMv6k
-    BranchWritePC(value);
+    if (ArchMajorVersion() >= 7 && !current_location.TFlag()) {
+        BXWritePC(value);
+    } else {
+        BranchWritePC(value);
+    }
 }
 
 void IREmitter::BranchWritePC(const IR::U32& value) {
@@ -67,6 +94,7 @@ void IREmitter::BranchWritePC(const IR::U32& value) {
         const auto new_pc = And(value, Imm32(0xFFFFFFFC));
         Inst(Opcode::A32SetRegister, IR::Value(A32::Reg::PC), new_pc);
     } else {
+        // NOTE: If ArchMajorVersion() < 6 and value[0:1] != 0b00 this should be UNPREDICTABLE.
         const auto new_pc = And(value, Imm32(0xFFFFFFFE));
         Inst(Opcode::A32SetRegister, IR::Value(A32::Reg::PC), new_pc);
     }
@@ -77,9 +105,11 @@ void IREmitter::BXWritePC(const IR::U32& value) {
 }
 
 void IREmitter::LoadWritePC(const IR::U32& value) {
-    // This behaviour is ARM version-dependent.
-    // The below implementation is for ARMv6k
-    BXWritePC(value);
+    if (ArchMajorVersion() >= 5) {
+        BXWritePC(value);
+    } else {
+        BranchWritePC(value);
+    }
 }
 
 void IREmitter::CallSupervisor(const IR::U32& value) {

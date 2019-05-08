@@ -21,6 +21,8 @@ static bool CondCanContinue(ConditionalState cond_state, const A32::IREmitter& i
     return std::all_of(ir.block.begin(), ir.block.end(), [](const IR::Inst& inst) { return !inst.WritesToCPSR(); });
 }
 
+CommonTranslatorVisitor::CommonTranslatorVisitor(IR::Block& block, LocationDescriptor descriptor, const TranslationOptions& options) : ir(block, descriptor, options.arch_version), options(options) {}
+
 bool CommonTranslatorVisitor::ConditionPassed(Cond cond) {
     ASSERT_MSG(cond_state != ConditionalState::Break,
                "This should never happen. We requested a break but that wasn't honored.");

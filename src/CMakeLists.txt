@@ -1,5 +1,6 @@
 add_library(dynarmic
     ../include/dynarmic/A32/a32.h
+    ../include/dynarmic/A32/arch_version.h
     ../include/dynarmic/A32/config.h
     ../include/dynarmic/A32/coprocessor.h
     ../include/dynarmic/A32/coprocessor_util.h
@@ -93,6 +94,7 @@ add_library(dynarmic
     frontend/A32/ITState.h
     frontend/A32/location_descriptor.cpp
     frontend/A32/location_descriptor.h
+    frontend/A32/matcher.h
     frontend/A32/PSR.h
     frontend/A32/translate/impl/barrier.cpp
     frontend/A32/translate/impl/branch.cpp

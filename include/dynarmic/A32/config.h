@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <memory>
 
+#include <dynarmic/A32/arch_version.h>
+
 namespace Dynarmic {
 namespace A32 {
 
@@ -86,6 +88,9 @@ struct UserCallbacks {
 
 struct UserConfig {
     UserCallbacks* callbacks;
+
+    // Architecture version to emulate
+    ArchVersion arch_version = ArchVersion::v8;
 
     // Page Table
     // The page table is used for faster memory access. If an entry in the table is nullptr,

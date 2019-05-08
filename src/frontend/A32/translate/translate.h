@@ -7,6 +7,8 @@
 
 #include "common/common_types.h"
 
+#include <dynarmic/A32/arch_version.h>
+
 namespace Dynarmic::IR {
 class Block;
 } // namespace Dynarmic::IR
@@ -22,6 +24,9 @@ struct TranslationOptions {
     /// If this is false, the ExceptionRaised IR instruction is emitted.
     /// If this is true, we define some behaviour for some instructions.
     bool define_unpredictable_behaviour = false;
+
+    /// This determines the architecture version we translate from.
+    ArchVersion arch_version = ArchVersion::v8;
 };
 
 /**
