@@ -109,7 +109,9 @@ bool ThumbTranslatorVisitor::StepWithThumb16Instruction(u16 thumb16_instruction)
     current_instruction_size = 2;
 
     if (const auto decoder = DecodeThumb16<ThumbTranslatorVisitor>(thumb16_instruction)) {
-        return decoder->get().call(*this, thumb16_instruction);
+        if (options.arch_version >= decoder->get().GetMinArchVersion()) {
+            return decoder->get().call(*this, thumb16_instruction);
+        }
     }
 
     return UndefinedInstruction();

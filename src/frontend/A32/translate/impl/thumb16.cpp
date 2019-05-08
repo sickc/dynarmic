@@ -368,6 +368,9 @@ bool ThumbTranslatorVisitor::thumb16_MVN_reg(Reg m, Reg d) {
 bool ThumbTranslatorVisitor::thumb16_ADD_reg_t2(bool d_n_hi, Reg m, Reg d_n_lo) {
     const Reg d_n = d_n_hi ? (d_n_lo + 8) : d_n_lo;
     const Reg n = d_n;
+    if (options.arch_version < ArchVersion::v6T2 && !Common::Bit<3>(RegNumber(n)) && !Common::Bit<3>(RegNumber(m))) {
+        return UnpredictableInstruction();
+    }
     if (n == Reg::PC && m == Reg::PC) {
         return UnpredictableInstruction();
     }
@@ -406,8 +409,11 @@ bool ThumbTranslatorVisitor::thumb16_CMP_reg_t2(bool n_hi, Reg m, Reg n_lo) {
 // MOV <Rd>, <Rm>
 bool ThumbTranslatorVisitor::thumb16_MOV_reg(bool d_hi, Reg m, Reg d_lo) {
     const Reg d = d_hi ? (d_lo + 8) : d_lo;
-    const auto result = ir.GetRegister(m);
+    if (options.arch_version < ArchVersion::v6 && !Common::Bit<3>(RegNumber(d)) && !Common::Bit<3>(RegNumber(m))) {
+        return UnpredictableInstruction();
+    }
 
+    const auto result = ir.GetRegister(m);
     if (d == Reg::PC) {
         ir.ALUWritePC(result);
         ir.SetTerm(IR::Term::FastDispatchHint{});
