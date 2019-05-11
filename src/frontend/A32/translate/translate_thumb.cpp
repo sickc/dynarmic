@@ -121,7 +121,9 @@ bool ThumbTranslatorVisitor::StepWithThumb32Instruction(u32 thumb32_instruction)
     current_instruction_size = 4;
 
     if (const auto decoder = DecodeThumb32<ThumbTranslatorVisitor>(thumb32_instruction)) {
-        return decoder->get().call(*this, thumb32_instruction);
+        if (options.arch_version >= decoder->get().GetMinArchVersion()) {
+            return decoder->get().call(*this, thumb32_instruction);
+        }
     }
 
     return UndefinedInstruction();
