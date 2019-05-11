@@ -84,6 +84,7 @@ add_library(dynarmic
     frontend/A32/decoder/thumb16.h
     frontend/A32/decoder/thumb16.inc
     frontend/A32/decoder/thumb32.h
+    frontend/A32/decoder/thumb32.inc
     frontend/A32/decoder/vfp.h
     frontend/A32/decoder/vfp.inc
     frontend/A32/disassembler/disassembler.h
